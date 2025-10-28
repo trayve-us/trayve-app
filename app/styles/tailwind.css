@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Converted from Trayve OKLCH colors to HSL */
+    --background: 0 0% 99.4%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 99.4%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 99.1%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 287 69% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 255 23% 94%;
+    --secondary-foreground: 0 0% 13%;
+    --muted: 0 0% 97%;
+    --muted-foreground: 0 0% 44%;
+    --accent: 266 57% 88%;
+    --accent-foreground: 259 50% 54%;
+    --destructive: 23 76% 63%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 286 48% 91%;
+    --input: 0 0% 94%;
+    --ring: 0 0% 0%;
+    --chart-1: 156 61% 74%;
+    --chart-2: 287 69% 45%;
+    --chart-3: 51 73% 73%;
+    --chart-4: 260 52% 58%;
+    --chart-5: 0 0% 56%;
+    --sidebar: 248 41% 96%;
+    --sidebar-foreground: 0 0% 0%;
+    --sidebar-primary: 0 0% 0%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 94%;
+    --sidebar-accent-foreground: 0 0% 0%;
+    --sidebar-border: 0 0% 94%;
+    --sidebar-ring: 0 0% 0%;
+    --radius: 1.4rem;
+  }
+
+  .dark {
+    /* Converted from Trayve OKLCH dark colors to HSL */
+    --background: 271 21% 22%;
+    --foreground: 0 0% 95.5%;
+    --card: 275 22% 26%;
+    --card-foreground: 0 0% 95.5%;
+    --popover: 275 22% 26%;
+    --popover-foreground: 0 0% 95.5%;
+    --primary: 292 64% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 273 25% 29%;
+    --secondary-foreground: 0 0% 95.5%;
+    --muted: 273 25% 29%;
+    --muted-foreground: 0 0% 70.6%;
+    --accent: 260 45% 30%;
+    --accent-foreground: 247 44% 74%;
+    --destructive: 22 68% 71%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 268 21% 33%;
+    --input: 268 21% 33%;
+    --ring: 292 64% 52%;
+    --chart-1: 152 70% 80%;
+    --chart-2: 292 64% 52%;
+    --chart-3: 20 73% 81%;
+    --chart-4: 260 52% 67%;
+    --chart-5: 0 0% 70.6%;
+    --sidebar: 286 15% 20%;
+    --sidebar-foreground: 0 0% 95.5%;
+    --sidebar-primary: 292 64% 52%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 273 25% 29%;
+    --sidebar-accent-foreground: 292 64% 52%;
+    --sidebar-border: 268 21% 33%;
+    --sidebar-ring: 292 64% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
