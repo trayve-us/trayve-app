@@ -1,156 +1,89 @@
-import { useState, useCallback } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useActionData, useLoaderData, useSubmit } from "@remix-run/react";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate } from "@remix-run/react";
+import { Page } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { StepNavigation } from "../components/studio/StepNavigation";
+import { getShopifyUserByShop } from "../lib/auth.server";
+import { getUserCreditBalance } from "../lib/credits.server";
+import { type SubscriptionTier } from "../lib/model-access";
+import { useState } from "react";
+import { CreditsDisplay } from "../components/CreditsDisplay";
+import { UserProfile } from "../components/UserProfile";
 import { UploadStep } from "../components/studio/UploadStep";
 import { ModelSelectStep } from "../components/studio/ModelSelectStep";
 import { PoseSelectStep } from "../components/studio/PoseSelectStep";
 import { ConfirmStep } from "../components/studio/ConfirmStep";
-import { GenerationResults } from "../components/studio/GenerationResults";
-
-// Mock data for testing - Replace with real API calls later
-const MOCK_RESULTS = [
-  {
-    id: "1",
-    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+1",
-    pose_name: "Front View",
-  },
-  {
-    id: "2",
-    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+2",
-    pose_name: "Side View",
-  },
-  {
-    id: "3",
-    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+3",
-    pose_name: "Back View",
-  },
-];
+import { Upload, Users, Wand2, Sparkles, ArrowRight, ArrowLeft } from "lucide-react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return json({ step: 1 });
-};
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const user = await getShopifyUserByShop(shop);
+  const balance = user ? await getUserCreditBalance(user.trayve_user_id) : null;
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const action = formData.get("action");
+  // TODO: Fetch subscription tier from Shopify app charges or user_subscriptions table
+  // For now, default to "free" tier. Premium features will show locked state.
+  const subscriptionTier: SubscriptionTier = "free";
 
-  try {
-    if (action === "upload") {
-      return json({ success: true, step: 2 });
-    } else if (action === "selectModel") {
-      return json({ success: true, step: 3 });
-    } else if (action === "selectPose") {
-      return json({ success: true, step: 4 });
-    } else if (action === "generate") {
-      // Mock generation success
-      return json({ 
-        success: true, 
-        generated: true,
-        message: "Generation completed!" 
-      });
-    }
-  } catch (error) {
-    return json(
-      { error: "An error occurred. Please try again." },
-      { status: 500 }
-    );
-  }
-
-  return json({ success: false });
+  return json({
+    shop,
+    user: user ? {
+      email: user.shop_email || shop,
+      shopName: user.shop_name || shop.replace('.myshopify.com', ''),
+      subscriptionTier,
+    } : null,
+    credits: balance
+      ? {
+          available: balance.available_credits,
+          total: balance.total_credits,
+        }
+      : { available: 0, total: 0 },
+  });
 };
 
 export default function Studio() {
-  const loaderData = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const submit = useSubmit();
-
-  const [currentStep, setCurrentStep] = useState(loaderData.step);
+  const { credits, user } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const [currentStep, setCurrentStep] = useState(1);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [selectedPoses, setSelectedPoses] = useState<string[]>([]);
-  const [showResults, setShowResults] = useState(false);
-  const [projectName, setProjectName] = useState("My Fashion Project");
 
   const steps = [
-    { id: 1, title: "Upload Clothing" },
-    { id: 2, title: "Select Model" },
-    { id: 3, title: "Choose Poses" },
-    { id: 4, title: "Confirm & Generate" },
+    {
+      id: 1,
+      title: "Upload",
+      subtitle: "Photos",
+      icon: Upload,
+      status: currentStep === 1 ? "current" : currentStep > 1 ? "complete" : "upcoming",
+    },
+    {
+      id: 2,
+      title: "Choose Model",
+      subtitle: "AI Model Selection",
+      icon: Users,
+      status: currentStep === 2 ? "current" : currentStep > 2 ? "complete" : "upcoming",
+    },
+    {
+      id: 3,
+      title: "Select Poses",
+      subtitle: "Pose Selection",
+      icon: Wand2,
+      status: currentStep === 3 ? "current" : currentStep > 3 ? "complete" : "upcoming",
+    },
+    {
+      id: 4,
+      title: "Generate & Results",
+      subtitle: "AI Creation",
+      icon: Sparkles,
+      status: currentStep === 4 ? "current" : "upcoming",
+    },
   ];
 
-  // Check if generation completed
-  if (actionData?.generated && !showResults) {
-    setShowResults(true);
-  }
-
-  const handleFileSelect = useCallback((file: File) => {
-    if (file && file.type.startsWith("image/")) {
-      setUploadedFile(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
-    }
-  }, []);
-
-  const removeFile = useCallback(() => {
-    setUploadedFile(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
-  }, [previewUrl]);
-
-  const handleModelSelect = (modelId: string) => {
-    setSelectedModel(modelId);
-  };
-
-  const handlePoseSelect = (poseId: string) => {
-    if (selectedPoses.includes(poseId)) {
-      setSelectedPoses(selectedPoses.filter((id) => id !== poseId));
-    } else if (selectedPoses.length < 4) {
-      setSelectedPoses([...selectedPoses, poseId]);
-    }
-  };
-
-  const handleGenerate = () => {
-    const formData = new FormData();
-    formData.append("action", "generate");
-    submit(formData, { method: "post" });
-  };
-
-  const handleBackToStudio = () => {
-    setShowResults(false);
-    setCurrentStep(1);
-    setUploadedFile(null);
-    setPreviewUrl(null);
-    setSelectedModel(null);
-    setSelectedPoses([]);
-  };
-
-  const handleStepClick = (stepId: number) => {
-    if (canProceedToStep(stepId)) {
-      setCurrentStep(stepId);
-    }
-  };
-
-  const canProceedToStep = (stepId: number) => {
-    if (stepId === 1) return true;
-    if (stepId === 2) return uploadedFile !== null;
-    if (stepId === 3) return uploadedFile !== null && selectedModel !== null;
-    if (stepId === 4) return uploadedFile !== null && selectedModel !== null && selectedPoses.length > 0;  
-    return false;
-  };
-
   const handleNextStep = () => {
-    if (currentStep < steps.length) {
+    if (currentStep < 4) {
       setCurrentStep(currentStep + 1);
-    } else if (currentStep === steps.length) {
-      handleGenerate();
     }
   };
 
@@ -160,94 +93,316 @@ export default function Studio() {
     }
   };
 
-  // Show results screen if generation completed
-  if (showResults) {
-    return (
-      <GenerationResults
-        projectName={projectName}
-        images={MOCK_RESULTS}
-        onBack={handleBackToStudio}
-      />
-    );
-  }
+  const handleStepClick = (stepId: number) => {
+    if (stepId <= currentStep) {
+      setCurrentStep(stepId);
+    }
+  };
+
+  const handleFileSelect = (file: File) => {
+    setUploadedFile(file);
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+  };
+
+  const handleRemoveFile = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setUploadedFile(null);
+    setPreviewUrl(null);
+  };
+
+  const handleModelSelect = (modelId: string) => {
+    setSelectedModel(modelId);
+  };
+
+  const handlePoseSelect = (poseId: string) => {
+    setSelectedPoses(prev => {
+      if (prev.includes(poseId)) {
+        return prev.filter(id => id !== poseId);
+      } else if (prev.length < 4) {
+        return [...prev, poseId];
+      }
+      return prev;
+    });
+  };
+
+  const handleGenerate = () => {
+    alert("Generation started! This will be connected to your API.");
+  };
+
+  const canProceed = () => {
+    switch (currentStep) {
+      case 1:
+        return uploadedFile !== null;
+      case 2:
+        return selectedModel !== null;
+      case 3:
+        return selectedPoses.length > 0;
+      case 4:
+        return true;
+      default:
+        return false;
+    }
+  };
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-foreground">
-      {/* Step Navigation Bar */}
-      <StepNavigation
-        currentStep={currentStep}
-        steps={steps}
-        onStepClick={handleStepClick}
-        onPreviousStep={handlePreviousStep}
-        onNextStep={handleNextStep}
-        canProceedToStep={canProceedToStep}
-        selectedPosesCount={selectedPoses.length}
-      />
+    <Page fullWidth>
+      <TitleBar title="Virtual Try-On Studio" />
 
-      {/* Main Content Area */}
-      <div
-        className="flex-1 min-h-0 px-6 flex flex-col transition-all duration-300 ease-in-out"
-        style={{
-          position: "relative",
-          height: "calc(100vh - 180px)",
-        }}
-      >
-        {/* Content Container - Allow scrolling */}
-        <div className="flex-1 pt-2 sm:pt-6 lg:pt-6 scrollbar-hide transition-all duration-300 ease-in-out overflow-y-auto">
-          <div className="max-w-7xl px-0 sm:px-4 lg:px-0 pb-4 sm:pb-6 lg:pb-8">
-            {/* Error/Success Messages */}
-            {actionData?.error && (
-              <div className="mb-6 p-4 bg-destructive/10 border border-destructive rounded-lg">
-                <p className="text-sm text-destructive">{actionData.error}</p>
+      {/* TOP NAVBAR WITH CREDITS */}
+      <div style={{
+        backgroundColor: "white",
+        borderBottom: "1px solid #E1E3E5",
+        padding: "16px 24px",
+        position: "sticky",
+        top: 0,
+        zIndex: 1000,
+      }}>
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          maxWidth: "1400px",
+          margin: "0 auto",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
+            <img 
+              src="/logo_trayve.png" 
+              alt="Trayve" 
+              style={{
+                height: "32px",
+                width: "auto",
+              }}
+            />
+            
+            {/* Navigation Tabs */}
+            <nav style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={() => navigate("/app/studio")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#702dff",
+                  backgroundColor: "rgba(112, 45, 255, 0.1)",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Generate
+              </button>
+              <button
+                onClick={() => navigate("/app/projects")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#6b7280",
+                  backgroundColor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f9fafb";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Projects
+              </button>
+              <button
+                onClick={() => navigate("/app/pricing")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#6b7280",
+                  backgroundColor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f9fafb";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Pricing
+              </button>
+            </nav>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <CreditsDisplay />
+            {user && <UserProfile email={user.email} shopName={user.shopName} />}
+          </div>
+        </div>
+      </div>
+
+      {/* Main Studio Container - Exact Trayve Design */}
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "calc(100vh - 120px)",
+        backgroundColor: "#FAFBFC",
+      }}>
+        {/* Steps Navigation Bar */}
+        <div style={{
+          flexShrink: 0,
+          backgroundColor: "white",
+          borderBottom: "1px solid #E1E3E5",
+          padding: "20px 24px",
+        }}>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}>
+            {/* Left: Step Indicators */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              {/* All Steps */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                {steps.map((step) => {
+                  const isActive = step.id === currentStep;
+                  const isComplete = step.status === "complete";
+                  const isClickable = step.id <= currentStep;
+
+                  return (
+                    <button
+                      key={step.id}
+                      onClick={() => handleStepClick(step.id)}
+                      disabled={!isClickable}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "12px 24px",
+                        backgroundColor: isActive ? "#702dff" : "#f3f4f6",
+                        border: "none",
+                        borderRadius: "100px",
+                        fontSize: "14px",
+                        fontWeight: "500",
+                        color: isActive ? "white" : "#6b7280",
+                        cursor: isClickable ? "pointer" : "not-allowed",
+                        transition: "all 0.2s ease",
+                        opacity: isClickable ? 1 : 0.6,
+                      }}
+                      onMouseOver={(e) => {
+                        if (isClickable && !isActive) {
+                          e.currentTarget.style.backgroundColor = "#e5e7eb";
+                        }
+                      }}
+                      onMouseOut={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.backgroundColor = "#f3f4f6";
+                        }
+                      }}
+                    >
+                      <span>{step.title}</span>
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
-            {actionData?.message && !showResults && (
-              <div className="mb-6 p-4 bg-primary/10 border border-primary rounded-lg">
-                <p className="text-sm text-primary">{actionData.message}</p>
-              </div>
-            )}
-
-            <div className="px-2 sm:px-4 lg:px-0">
-              {/* Step 1: Upload Clothing */}
-              {currentStep === 1 && (
-                <UploadStep
-                  uploadedFile={uploadedFile}
-                  previewUrl={previewUrl}
-                  onFileSelect={handleFileSelect}
-                  onRemoveFile={removeFile}
-                />
-              )}
-
-              {/* Step 2: Select Model */}
-              {currentStep === 2 && (
-                <ModelSelectStep
-                  selectedModel={selectedModel}
-                  onModelSelect={handleModelSelect}
-                />
-              )}
-
-              {/* Step 3: Choose Poses */}
-              {currentStep === 3 && (
-                <PoseSelectStep
-                  selectedPoses={selectedPoses}
-                  onPoseSelect={handlePoseSelect}
-                />
-              )}
-
-              {/* Step 4: Confirm & Generate */}
-              {currentStep === 4 && (
-                <ConfirmStep
-                  previewUrl={previewUrl}
-                  selectedModel={selectedModel}
-                  selectedPoses={selectedPoses}
-                  onGenerate={handleGenerate}
-                />
+            {/* Right: Next Button */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              {currentStep < 4 && (
+                <button
+                  onClick={handleNextStep}
+                  disabled={!canProceed()}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "12px 28px",
+                    backgroundColor: canProceed() ? "#702dff" : "#e5e7eb",
+                    border: "none",
+                    borderRadius: "100px",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                    color: canProceed() ? "white" : "#9ca3af",
+                    cursor: canProceed() ? "pointer" : "not-allowed",
+                    transition: "all 0.2s ease",
+                  }}
+                  onMouseOver={(e) => {
+                    if (canProceed()) {
+                      e.currentTarget.style.backgroundColor = "#5c24cc";
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (canProceed()) {
+                      e.currentTarget.style.backgroundColor = "#702dff";
+                    }
+                  }}
+                >
+                  <span>Next Step</span>
+                  <ArrowRight size={18} />
+                </button>
               )}
             </div>
           </div>
         </div>
+
+        {/* Main Content Area */}
+        <div style={{
+          flex: 1,
+          padding: "32px 24px",
+          overflowY: "auto",
+        }}>
+          <div style={{
+            maxWidth: "1400px",
+            margin: "0 auto",
+            width: "100%",
+          }}>
+            {/* Step 1: Upload */}
+            {currentStep === 1 && (
+              <UploadStep
+                uploadedFile={uploadedFile}
+                previewUrl={previewUrl}
+                onFileSelect={handleFileSelect}
+                onRemoveFile={handleRemoveFile}
+              />
+            )}
+
+            {/* Step 2: Model Selection */}
+            {currentStep === 2 && (
+              <ModelSelectStep
+                selectedModel={selectedModel}
+                onModelSelect={handleModelSelect}
+                subscriptionTier={user?.subscriptionTier || "free"}
+              />
+            )}
+
+            {/* Step 3: Pose Selection */}
+            {currentStep === 3 && (
+              <PoseSelectStep
+                selectedModel={selectedModel}
+                selectedPoses={selectedPoses}
+                onPoseSelect={handlePoseSelect}
+              />
+            )}
+
+            {/* Step 4: Confirm & Generate */}
+            {currentStep === 4 && (
+              <ConfirmStep
+                previewUrl={previewUrl}
+                selectedModel={selectedModel}
+                selectedPoses={selectedPoses}
+                onGenerate={handleGenerate}
+              />
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </Page>
   );
 }

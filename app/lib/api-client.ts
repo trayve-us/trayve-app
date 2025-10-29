@@ -3,7 +3,7 @@
  * This proxies requests to your existing Next.js API routes
  */
 
-const TRAYVE_API_URL = process.env.TRAYVE_API_URL || 'http://localhost:3000';
+const TRAYVE_API_URL = process.env.TRAYVE_API_URL || 'https://trayve.app';
 
 interface ApiOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';

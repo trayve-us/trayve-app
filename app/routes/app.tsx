@@ -6,6 +6,7 @@ import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
+import { CreditsDisplay } from "../components/CreditsDisplay";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -24,6 +25,7 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
+        <Link to="/app/studio">Studio</Link>
         <Link to="/app/additional">Additional page</Link>
       </NavMenu>
       <Outlet />
@@ -31,7 +33,7 @@ export default function App() {
   );
 }
 
-// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
+// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response. 
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }

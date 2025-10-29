@@ -1,96 +1,397 @@
+import { useState, useEffect } from "react";
+import { Lock } from "lucide-react";
+import { 
+  enrichModelsWithAccess, 
+  type SubscriptionTier, 
+  type EnrichedModel 
+} from "../../lib/model-access";
+
+interface BaseModel {
+  id: string;
+  name: string;
+  description?: string;
+  gender: "male" | "female" | "unisex";
+  body_type: "slim" | "athletic" | "curvy" | "plus-size";
+  ethnicity?: string;
+  age_range?: string;
+  image_url: string;
+  supabase_path: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 interface ModelSelectStepProps {
   selectedModel: string | null;
   onModelSelect: (modelId: string) => void;
+  subscriptionTier: SubscriptionTier;
 }
 
 export function ModelSelectStep({
   selectedModel,
   onModelSelect,
+  subscriptionTier,
 }: ModelSelectStepProps) {
-  // Mock model data
-  const models = [
-    { id: "model-1", name: "Model 1", image: "/studio/logo_anim.gif" },
-    { id: "model-2", name: "Model 2", image: "/studio/logo_anim.gif" },
-    { id: "model-3", name: "Model 3", image: "/studio/logo_anim.gif" },
-    { id: "model-4", name: "Model 4", image: "/studio/logo_anim.gif" },
-    { id: "model-5", name: "Model 5", image: "/studio/logo_anim.gif" },
-    { id: "model-6", name: "Model 6", image: "/studio/logo_anim.gif" },
-  ];
+  const [models, setModels] = useState<EnrichedModel<BaseModel>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedGender, setSelectedGender] = useState<string>("all");
+  const [selectedBodyType, setSelectedBodyType] = useState<string>("all");
+
+  // Fetch models on component mount and when filters change
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const filters: any = {
+          is_active: true,
+          // Note: Not filtering by promoted_only to show all active models
+        };
+        
+        if (selectedGender !== "all") filters.gender = selectedGender;
+        if (selectedBodyType !== "all") filters.body_type = selectedBodyType;
+
+        console.log('🔍 Fetching models with filters:', filters);
+
+        // Call Trayve backend API via server-side proxy (bypasses CORS)
+        const response = await fetch('/api/proxy/models?endpoint=/api/models/base-models', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ filters }),
+        });
+
+        console.log('📡 API Response status:', response.status);
+        console.log('📡 API Response headers:', Object.fromEntries(response.headers.entries()));
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('❌ API Error response:', errorText);
+          throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log('📦 API Response data:', data);
+        console.log('📦 API Response keys:', Object.keys(data));
+        
+        if (data.success && data.models) {
+          console.log(`✅ Received ${data.models.length} models from API`);
+          console.log('📋 First model:', data.models[0]);
+          
+          // Enrich models with access information based on subscription tier
+          const enrichedModels = enrichModelsWithAccess<BaseModel>(data.models, subscriptionTier);
+          console.log('🔐 Enriched models count:', enrichedModels.length);
+          console.log('🔐 First enriched model:', enrichedModels[0]);
+          
+          setModels(enrichedModels);
+        } else {
+          console.warn('⚠️ API response missing models or success flag:', data);
+          setError(`API returned success=${data.success}, models count=${data.models?.length || 0}`);
+        }
+      } catch (error) {
+        console.error("❌ Error fetching models:", error);
+        setError(error instanceof Error ? error.message : 'Unknown error occurred');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchModels();
+  }, [selectedGender, selectedBodyType, subscriptionTier]);
 
   return (
     <div className="space-y-6 pb-20 sm:pb-24 md:pb-28">
+      {/* Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{ padding: '10px', background: '#f0f0f0', fontSize: '12px', fontFamily: 'monospace' }}>
+          <div>🔍 Debug Info:</div>
+          <div>Loading: {loading ? 'YES' : 'NO'}</div>
+          <div>Models Count: {models.length}</div>
+          <div>Subscription Tier: {subscriptionTier}</div>
+          <div>Selected Gender: {selectedGender}</div>
+          <div>Selected Body Type: {selectedBodyType}</div>
+          {error && <div style={{ color: 'red', marginTop: '8px' }}>Error: {error}</div>}
+        </div>
+      )}
+
+      {/* Filters */}
       <div className="w-full px-3 sm:px-4 md:px-6">
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
-          {models.map((model, index) => {
-            const isSelected = selectedModel === model.id;
+        <div className="flex gap-4 flex-wrap">
+          {/* Gender Filter */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSelectedGender("all")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedGender === "all" ? "#702dff" : "#f3f4f6",
+                color: selectedGender === "all" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              All Genders
+            </button>
+            <button
+              onClick={() => setSelectedGender("male")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedGender === "male" ? "#702dff" : "#f3f4f6",
+                color: selectedGender === "male" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Male
+            </button>
+            <button
+              onClick={() => setSelectedGender("female")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedGender === "female" ? "#702dff" : "#f3f4f6",
+                color: selectedGender === "female" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Female
+            </button>
+          </div>
 
-            return (
-              <div
-                key={model.id}
-                onClick={() => onModelSelect(model.id)}
-                className="group cursor-pointer"
-              >
+          {/* Body Type Filter */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSelectedBodyType("all")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedBodyType === "all" ? "#702dff" : "#f3f4f6",
+                color: selectedBodyType === "all" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              All Body Types
+            </button>
+            <button
+              onClick={() => setSelectedBodyType("slim")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedBodyType === "slim" ? "#702dff" : "#f3f4f6",
+                color: selectedBodyType === "slim" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Slim
+            </button>
+            <button
+              onClick={() => setSelectedBodyType("athletic")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedBodyType === "athletic" ? "#702dff" : "#f3f4f6",
+                color: selectedBodyType === "athletic" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Athletic
+            </button>
+            <button
+              onClick={() => setSelectedBodyType("curvy")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: selectedBodyType === "curvy" ? "#702dff" : "#f3f4f6",
+                color: selectedBodyType === "curvy" ? "white" : "#6b7280",
+                fontWeight: "500",
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Curvy
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <div style={{ textAlign: "center", padding: "40px" }}>
+          <div style={{ color: "#6b7280", fontSize: "16px" }}>
+            Loading models...
+          </div>
+        </div>
+      )}
+
+      {/* Models Grid */}
+      {!loading && models.length > 0 && (
+        <div className="w-full px-3 sm:px-4 md:px-6">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
+            {models.map((model) => {
+              const isSelected = selectedModel === model.id;
+              const isLocked = model.accessInfo.isLocked;
+
+              return (
                 <div
-                  className={`relative overflow-hidden rounded-xl transition-all duration-200 ${
-                    isSelected
-                      ? "ring-2 ring-primary shadow-lg"
-                      : "hover:shadow-md"
-                  }`}
+                  key={model.id}
+                  onClick={() => {
+                    if (!isLocked) {
+                      onModelSelect(model.id);
+                    }
+                  }}
+                  className="group cursor-pointer"
+                  style={{
+                    opacity: isLocked ? 0.7 : 1,
+                    cursor: isLocked ? "not-allowed" : "pointer",
+                  }}
                 >
-                  {/* Model Image */}
-                  <div className="relative aspect-[3/4.5] overflow-hidden">
-                    <div className="w-full h-full bg-muted flex items-center justify-center">
-                      <span className="text-muted-foreground text-sm">
-                        {model.name}
-                      </span>
-                    </div>
+                  <div
+                    className={`relative overflow-hidden rounded-xl transition-all duration-200 ${
+                      isSelected
+                        ? "ring-2 ring-primary shadow-lg"
+                        : "hover:shadow-md"
+                    }`}
+                  >
+                    {/* Model Image */}
+                    <div className="relative aspect-[3/4.5] overflow-hidden">
+                      <img
+                        src={model.image_url}
+                        alt={model.name}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = "none";
+                          target.parentElement!.innerHTML = `<div style="width: 100%; height: 100%; background: #f3f4f6; display: flex; align-items: center; justify-content: center;"><span style="color: #6b7280; font-size: 14px;">${model.name}</span></div>`;
+                        }}
+                      />
 
-                    {/* Simple Gradient Overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
-
-                    {/* Selection Indicator */}
-                    <div className="absolute top-3 right-3">
-                      <div
-                        className={`w-6 h-6 rounded-full border-2 transition-all duration-200 ${
-                          isSelected
-                            ? "bg-primary border-primary"
-                            : "bg-white/20 border-white/40 backdrop-blur-sm"
-                        }`}
-                      >
-                        {isSelected && (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <div className="w-2 h-2 bg-white rounded-full" />
+                      {/* Locked Overlay */}
+                      {isLocked && (
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-10">
+                          <div className="text-center px-4">
+                            <Lock
+                              size={32}
+                              className="mx-auto mb-2"
+                              style={{ color: "white" }}
+                            />
+                            <div className="text-white text-sm font-semibold mb-1">
+                              Premium Model
+                            </div>
+                            <div className="text-white/80 text-xs">
+                              {model.accessInfo.upgradePrompt}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    </div>
+                        </div>
+                      )}
 
-                    {/* Bottom Info */}
-                    <div className="absolute bottom-0 left-0 right-0 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-white/80 text-xs bg-black/30 px-1.5 py-0.5 rounded backdrop-blur-sm truncate">
-                          {model.name}
-                        </span>
-                      </div>
+                      {/* Simple Gradient Overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
 
-                      {/* Selected State */}
-                      {isSelected && (
-                        <div className="mt-2 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/90 backdrop-blur-sm rounded-md">
-                            <span className="text-white text-xs font-medium">
-                              Selected
+                      {/* Premium Badge (top-left corner) */}
+                      {isLocked && (
+                        <div className="absolute top-3 left-3 z-20">
+                          <div className="flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-yellow-500/90 to-amber-500/90 backdrop-blur-sm rounded-md">
+                            <Lock size={12} style={{ color: "white" }} />
+                            <span className="text-white text-xs font-bold">
+                              PREMIUM
                             </span>
                           </div>
                         </div>
                       )}
+
+                      {/* Selection Indicator */}
+                      {!isLocked && (
+                        <div className="absolute top-3 right-3">
+                          <div
+                            className={`w-6 h-6 rounded-full border-2 transition-all duration-200 ${
+                              isSelected
+                                ? "bg-primary border-primary"
+                                : "bg-white/20 border-white/40 backdrop-blur-sm"
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <div className="w-2 h-2 bg-white rounded-full" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Bottom Info */}
+                      <div className="absolute bottom-0 left-0 right-0 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-white/90 text-xs bg-black/40 px-2 py-1 rounded backdrop-blur-sm truncate font-medium">
+                            {model.name}
+                          </span>
+                        </div>
+
+                        {/* Model Details */}
+                        <div className="mt-1 flex gap-1.5">
+                          <span className="text-white/70 text-xs bg-black/30 px-1.5 py-0.5 rounded backdrop-blur-sm capitalize">
+                            {model.gender}
+                          </span>
+                          <span className="text-white/70 text-xs bg-black/30 px-1.5 py-0.5 rounded backdrop-blur-sm capitalize">
+                            {model.body_type}
+                          </span>
+                        </div>
+
+                        {/* Selected State */}
+                        {isSelected && !isLocked && (
+                          <div className="mt-2 text-center">
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/90 backdrop-blur-sm rounded-md">
+                              <span className="text-white text-xs font-medium">
+                                Selected
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && models.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px" }}>
+          <div style={{ color: "#6b7280", fontSize: "16px", marginBottom: "8px" }}>
+            No models found
+          </div>
+          <div style={{ color: "#9ca3af", fontSize: "14px" }}>
+            Try adjusting your filters
+          </div>
+        </div>
+      )}
     </div>
   );
 }

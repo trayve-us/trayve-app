@@ -1,20 +1,38 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
-import { Page, Layout, Card, Button, BlockStack, Text } from "@shopify/polaris";
+import { Page, Layout, Card, Button, BlockStack, Text, Banner } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { getOrCreateShopifyUser } from "../lib/auth.server";
+import { getUserCreditBalance } from "../lib/credits.server";
 import { useEffect } from "react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
+
+  // Get or create Shopify user (creates user + 2000 credits if new)
+  const { user, isNewUser } = await getOrCreateShopifyUser(shop, {
+    shopId: session.id,
+  });
+
+  // Get credit balance
+  const balance = await getUserCreditBalance(user.trayve_user_id);
 
   return json({
-    shop: session.shop,
+    shop,
+    isNewUser,
+    credits: balance
+      ? {
+          available: balance.available_credits,
+          total: balance.total_credits,
+        }
+      : { available: 0, total: 0 },
   });
 };
 
 export default function Index() {
-  const { shop } = useLoaderData<typeof loader>();
+  const { shop, isNewUser, credits } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
   // Auto-redirect to studio after component mounts (client-side)
@@ -26,6 +44,15 @@ export default function Index() {
     <Page>
       <TitleBar title="Trayve Virtual Try-On" />
       <BlockStack gap="500">
+        {isNewUser && (
+          <Banner
+            title="Welcome to Trayve!"
+            tone="success"
+          >
+            <p>You've been credited with 2,000 credits to get started. Start creating amazing product images!</p>
+          </Banner>
+        )}
+
         <Layout>
           <Layout.Section>
             <Card>
@@ -36,11 +63,12 @@ export default function Index() {
                   </Text>
                   <Text as="p" variant="bodyMd">
                     Create stunning product images with AI-powered virtual try-on technology.
-                    Upload your clothing images and generate professional product photos in seconds.
+                    Upload your clothing images and generate professional product photos in seconds.       
                   </Text>
-                </BlockStack>
-
-                <Button
+                  <Text as="p" variant="bodyMd" tone="success">
+                    Available Credits: <strong>{credits.available.toLocaleString()}</strong>
+                  </Text>
+                </BlockStack>                <Button
                   variant="primary"
                   onClick={() => navigate('/app/studio')}
                   size="large"
@@ -68,7 +96,7 @@ export default function Index() {
             <Card>
               <BlockStack gap="200">
                 <Text as="h2" variant="headingMd">
-                  í²Ž High Quality
+                  ï¿½ï¿½ï¿½ High Quality
                 </Text>
                 <Text as="p" variant="bodyMd">
                   4K resolution images with realistic details.
@@ -81,7 +109,7 @@ export default function Index() {
             <Card>
               <BlockStack gap="200">
                 <Text as="h2" variant="headingMd">
-                  í±¥ Diverse Models
+                  ï¿½ï¿½ï¿½ Diverse Models
                 </Text>
                 <Text as="p" variant="bodyMd">
                   Choose from a wide range of model types.
@@ -94,7 +122,7 @@ export default function Index() {
             <Card>
               <BlockStack gap="200">
                 <Text as="h2" variant="headingMd">
-                  í²° Flexible Pricing
+                  ï¿½ï¿½ï¿½ Flexible Pricing
                 </Text>
                 <Text as="p" variant="bodyMd">
                   Pay only for what you use with credits.
