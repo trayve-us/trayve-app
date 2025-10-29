@@ -8,6 +8,26 @@ import { UploadStep } from "../components/studio/UploadStep";
 import { ModelSelectStep } from "../components/studio/ModelSelectStep";
 import { PoseSelectStep } from "../components/studio/PoseSelectStep";
 import { ConfirmStep } from "../components/studio/ConfirmStep";
+import { GenerationResults } from "../components/studio/GenerationResults";
+
+// Mock data for testing - Replace with real API calls later
+const MOCK_RESULTS = [
+  {
+    id: "1",
+    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+1",
+    pose_name: "Front View",
+  },
+  {
+    id: "2",
+    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+2",
+    pose_name: "Side View",
+  },
+  {
+    id: "3",
+    url: "https://placehold.co/600x800/5537c9/white?text=Generated+Image+3",
+    pose_name: "Back View",
+  },
+];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -27,7 +47,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } else if (action === "selectPose") {
       return json({ success: true, step: 4 });
     } else if (action === "generate") {
-      return json({ success: true, message: "Generation started!" });
+      // Mock generation success
+      return json({ 
+        success: true, 
+        generated: true,
+        message: "Generation completed!" 
+      });
     }
   } catch (error) {
     return json(
@@ -49,6 +74,8 @@ export default function Studio() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [selectedPoses, setSelectedPoses] = useState<string[]>([]);
+  const [showResults, setShowResults] = useState(false);
+  const [projectName, setProjectName] = useState("My Fashion Project");
 
   const steps = [
     { id: 1, title: "Upload Clothing" },
@@ -56,6 +83,11 @@ export default function Studio() {
     { id: 3, title: "Choose Poses" },
     { id: 4, title: "Confirm & Generate" },
   ];
+
+  // Check if generation completed
+  if (actionData?.generated && !showResults) {
+    setShowResults(true);
+  }
 
   const handleFileSelect = useCallback((file: File) => {
     if (file && file.type.startsWith("image/")) {
@@ -91,6 +123,15 @@ export default function Studio() {
     submit(formData, { method: "post" });
   };
 
+  const handleBackToStudio = () => {
+    setShowResults(false);
+    setCurrentStep(1);
+    setUploadedFile(null);
+    setPreviewUrl(null);
+    setSelectedModel(null);
+    setSelectedPoses([]);
+  };
+
   const handleStepClick = (stepId: number) => {
     if (canProceedToStep(stepId)) {
       setCurrentStep(stepId);
@@ -101,7 +142,7 @@ export default function Studio() {
     if (stepId === 1) return true;
     if (stepId === 2) return uploadedFile !== null;
     if (stepId === 3) return uploadedFile !== null && selectedModel !== null;
-    if (stepId === 4) return uploadedFile !== null && selectedModel !== null && selectedPoses.length > 0;
+    if (stepId === 4) return uploadedFile !== null && selectedModel !== null && selectedPoses.length > 0;  
     return false;
   };
 
@@ -118,6 +159,17 @@ export default function Studio() {
       setCurrentStep(currentStep - 1);
     }
   };
+
+  // Show results screen if generation completed
+  if (showResults) {
+    return (
+      <GenerationResults
+        projectName={projectName}
+        images={MOCK_RESULTS}
+        onBack={handleBackToStudio}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-background text-foreground">
@@ -150,7 +202,7 @@ export default function Studio() {
               </div>
             )}
 
-            {actionData?.message && (
+            {actionData?.message && !showResults && (
               <div className="mb-6 p-4 bg-primary/10 border border-primary rounded-lg">
                 <p className="text-sm text-primary">{actionData.message}</p>
               </div>
