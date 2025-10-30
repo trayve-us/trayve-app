@@ -1,18 +1,68 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate, useSubmit, useActionData } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getShopifyUserByShop } from "../lib/auth.server";
 import { getUserCreditBalance } from "../lib/credits.server";
+import { getActiveSubscription } from "../lib/services/subscription.service";
+import { storePendingCharge } from "../lib/pending-charges.server";
 import { UserProfile } from "../components/UserProfile";
 import { CreditsDisplay } from "../components/CreditsDisplay";
+import { useEffect } from "react";
+
+// Define subscription plans with pricing details
+const SUBSCRIPTION_PLANS = {
+  creator: {
+    name: "Creator Plan",
+    displayName: "Creator",
+    price: 29.0,
+    images: 30,
+    tier: "starter" as const,
+  },
+  professional: {
+    name: "Professional Plan",
+    displayName: "Professional",
+    price: 89.0,
+    images: 95,
+    tier: "professional" as const,
+  },
+  enterprise: {
+    name: "Enterprise Plan",
+    displayName: "Enterprise",
+    price: 199.0,
+    images: 220,
+    tier: "enterprise" as const,
+  },
+};
+
+type PlanKey = keyof typeof SUBSCRIPTION_PLANS;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const user = await getShopifyUserByShop(shop);
   const balance = user ? await getUserCreditBalance(user.trayve_user_id) : null;
+
+  // Check current active subscription from DATABASE
+  let currentPlan: string | null = null;
+  let dbSubscription = null;
+
+  if (user) {
+    try {
+      // Get active subscription from our database
+      dbSubscription = await getActiveSubscription(user.trayve_user_id);
+      
+      if (dbSubscription && dbSubscription.status === 'active') {
+        currentPlan = dbSubscription.plan_tier;
+        console.log(`📊 Found active subscription in DB: ${currentPlan}`);
+      } else {
+        console.log('📊 No active subscription in DB - user is on free tier');
+      }
+    } catch (error) {
+      console.error("Error fetching subscription from DB:", error);
+    }
+  }
 
   return json({
     shop,
@@ -26,16 +76,206 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           total: balance.total_credits,
         }
       : { available: 0, total: 0 },
+    currentPlan,
+    dbSubscription: dbSubscription ? {
+      id: dbSubscription.id,
+      planTier: dbSubscription.plan_tier,
+      status: dbSubscription.status,
+      imagesAllocated: dbSubscription.images_allocated,
+    } : null,
   });
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const planKey = formData.get("plan") as PlanKey;
+
+  if (!planKey || !(planKey in SUBSCRIPTION_PLANS)) {
+    return json({ error: "Invalid plan selected" }, { status: 400 });
+  }
+
+  const plan = SUBSCRIPTION_PLANS[planKey];
+
+  try {
+    // Build the return URL for the GraphQL API
+    // IMPORTANT: The GraphQL mutation requires an ABSOLUTE URL (URL type in schema)
+    // Use unauthenticated route that redirects to embedded app
+    // Format: https://{SHOPIFY_APP_URL}/billing/callback
+    // Shopify will append ?charge_id={id} automatically
+    const appUrl = process.env.SHOPIFY_APP_URL || '';
+    const returnUrl = `${appUrl}/billing/callback`;
+    
+    console.log(`🔗 Return URL (absolute URL for GraphQL): ${returnUrl}`);
+    
+    const response = await admin.graphql(
+      `#graphql
+      mutation CreateSubscription($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!, $test: Boolean) {
+        appSubscriptionCreate(
+          name: $name
+          returnUrl: $returnUrl
+          lineItems: $lineItems
+          test: $test
+        ) {
+          userErrors {
+            field
+            message
+          }
+          appSubscription {
+            id
+            status
+          }
+          confirmationUrl
+        }
+      }`,
+      {
+        variables: {
+          name: plan.name,
+          returnUrl: returnUrl,
+          test: true, // Use test mode for development
+          lineItems: [
+            {
+              plan: {
+                appRecurringPricingDetails: {
+                  price: {
+                    amount: plan.price,
+                    currencyCode: "USD",
+                  },
+                  interval: "EVERY_30_DAYS",
+                },
+              },
+            },
+          ],
+        },
+      }
+    );
+
+    const result = await response.json();
+    
+    // Log the full response for debugging
+    console.log("📦 GraphQL Response:", JSON.stringify(result, null, 2));
+    
+    const data = result.data?.appSubscriptionCreate;
+
+    // Check for GraphQL errors (different from userErrors)
+    if ('errors' in result && Array.isArray(result.errors) && result.errors.length > 0) {
+      console.error("❌ GraphQL errors:", result.errors);
+      return json(
+        { error: (result.errors as any)[0].message },
+        { status: 400 }
+      );
+    }
+
+    if (data?.userErrors && data.userErrors.length > 0) {
+      console.error("❌ Subscription creation user errors:", data.userErrors);
+      return json(
+        { error: data.userErrors[0].message },
+        { status: 400 }
+      );
+    }
+
+    if (data?.confirmationUrl) {
+      // Extract numeric charge ID from the subscription ID
+      const subscriptionId = data.appSubscription?.id;
+      if (subscriptionId) {
+        const chargeId = subscriptionId.replace('gid://shopify/AppSubscription/', '');
+        
+        // Store the charge_id to shop mapping in Supabase
+        try {
+          const { storePendingCharge } = await import('../lib/pending-charges.server');
+          await storePendingCharge(chargeId, session.shop);
+          console.log(`💾 Stored charge mapping: ${chargeId} -> ${session.shop}`);
+        } catch (err) {
+          console.error('❌ Failed to store pending charge:', err);
+          // Continue anyway - the user can still complete the flow
+        }
+      }
+      
+      console.log(`✅ Redirecting to confirmation URL: ${data.confirmationUrl}`);
+      // Return the URL to the client for App Bridge redirect
+      return json({ confirmationUrl: data.confirmationUrl });
+    }
+
+    return json({ error: "Failed to create subscription" }, { status: 500 });
+  } catch (error) {
+    console.error("❌ Error creating subscription:", error);
+    
+    // Log more details if it's a GraphQL error
+    if (error && typeof error === 'object' && 'graphQLErrors' in error) {
+      console.error("❌ GraphQL Error Details:", JSON.stringify(error, null, 2));
+    }
+    
+    return json(
+      { error: "An error occurred while creating the subscription" },
+      { status: 500 }
+    );
+  }
+};
+
 export default function Pricing() {
-  const { user } = useLoaderData<typeof loader>();
+  const { user, currentPlan } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const navigate = useNavigate();
+  const submit = useSubmit();
+
+  // Handle confirmation URL redirect using window.open for top-level navigation
+  useEffect(() => {
+    if (actionData && 'confirmationUrl' in actionData && actionData.confirmationUrl) {
+      // Redirect to the confirmation URL at the top level (breaks out of iframe)
+      window.open(actionData.confirmationUrl, '_top');
+    }
+  }, [actionData]);
+
+  const handleUpgrade = (planKey: PlanKey) => {
+    const formData = new FormData();
+    formData.append("plan", planKey);
+    submit(formData, { method: "post" });
+  };
 
   return (
     <Page fullWidth>
       <TitleBar title="Pricing" />
+
+      {/* Show loading message when redirecting to confirmation */}
+      {actionData && 'confirmationUrl' in actionData && actionData.confirmationUrl && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ 
+              fontSize: '24px', 
+              marginBottom: '16px',
+              animation: 'spin 1s linear infinite',
+            }}>⏳</div>
+            <p style={{ fontSize: '18px', color: '#202223' }}>
+              Redirecting to Shopify to confirm your subscription...
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Show error message if any */}
+      {actionData && 'error' in actionData && actionData.error && (
+        <div style={{
+          backgroundColor: '#FFF4E5',
+          border: '1px solid #FFB84D',
+          borderRadius: '8px',
+          padding: '16px',
+          margin: '16px 24px',
+          color: '#663C00',
+        }}>
+          <strong>Error:</strong> {actionData.error}
+        </div>
+      )}
 
       {/* TOP NAVBAR */}
       <div style={{
@@ -148,15 +388,23 @@ export default function Pricing() {
               color: "#202223",
               marginBottom: "16px",
             }}>
-              Pick What Works for You
+              Fashion Model Virtual Try-On
             </h1>
             <p style={{
               fontSize: "18px",
               color: "#6b7280",
               maxWidth: "600px",
+              margin: "0 auto 24px",
+            }}>
+              16 AI Fashion Models • 5 Poses Each • 80 Total Combinations
+            </p>
+            <p style={{
+              fontSize: "16px",
+              color: "#6b7280",
+              maxWidth: "700px",
               margin: "0 auto",
             }}>
-              Choose your quality. All plans include full model and pose library.
+              Free plan includes 4 models (20 combinations). Paid plans unlock all 16 models.
             </p>
           </div>
 
@@ -173,13 +421,18 @@ export default function Pricing() {
               price="$0"
               period="forever"
               features={[
-                "8 credits/month",
+                "2 images/month",
                 "2K resolution",
-                "Basic quality",
-                "All models & poses",
+                "4 AI models",
+                "20 pose combinations",
+                "Watermark on images",
+                "Email support",
               ]}
-              buttonText="Current Plan"
+              buttonText={currentPlan === null ? "Current Plan" : "Downgrade"}
               isPopular={false}
+              isCurrent={currentPlan === null}
+              isDisabled={true}
+              onUpgrade={() => {}}
             />
 
             {/* Creator Plan */}
@@ -188,43 +441,58 @@ export default function Pricing() {
               price="$29"
               period="month"
               features={[
-                "1,000 credits/month",
-                "2K resolution",
-                "Standard quality",
-                "All models & poses",
+                "30 images/month",
+                "4K resolution",
+                "All 16 AI models",
+                "80 pose combinations",
+                "No watermarks",
+                "Commercial rights",
               ]}
-              buttonText="Upgrade"
+              buttonText={currentPlan === "creator" ? "Current Plan" : "Upgrade"}
               isPopular={true}
+              isCurrent={currentPlan === "creator"}
+              isDisabled={currentPlan === "creator"}
+              onUpgrade={() => handleUpgrade("creator")}
             />
 
             {/* Professional Plan */}
             <PricingCard
               name="Professional"
-              price="$99"
+              price="$89"
               period="month"
               features={[
-                "4,000 credits/month",
+                "95 images/month",
                 "4K resolution",
-                "Premium quality",
-                "All models & poses",
+                "All 16 AI models",
+                "80 pose combinations",
+                "Priority processing",
+                "Priority support",
               ]}
-              buttonText="Upgrade"
+              buttonText={currentPlan === "professional" ? "Current Plan" : "Upgrade"}
               isPopular={false}
+              isCurrent={currentPlan === "professional"}
+              isDisabled={currentPlan === "professional"}
+              onUpgrade={() => handleUpgrade("professional")}
             />
 
             {/* Enterprise Plan */}
             <PricingCard
               name="Enterprise"
-              price="$299"
+              price="$199"
               period="month"
               features={[
-                "15,000 credits/month",
+                "220 images/month",
                 "4K resolution",
-                "Premium quality",
+                "All 16 AI models",
+                "80 pose combinations",
+                "Priority processing",
                 "Priority support",
               ]}
-              buttonText="Upgrade"
+              buttonText={currentPlan === "enterprise" ? "Current Plan" : "Upgrade"}
               isPopular={false}
+              isCurrent={currentPlan === "enterprise"}
+              isDisabled={currentPlan === "enterprise"}
+              onUpgrade={() => handleUpgrade("enterprise")}
             />
           </div>
 
@@ -242,19 +510,23 @@ export default function Pricing() {
             <div style={{ maxWidth: "800px", margin: "0 auto" }}>
               <FAQItem
                 question="Can I change my plan anytime?"
-                answer="If you're on the Free plan, you can upgrade to any paid plan whenever you want. If you're on Creator, you'll need to use all your credits before upgrading to Professional or Enterprise."
+                answer="Yes! You can upgrade your plan at any time. Your new monthly image allowance will start immediately."
               />
               <FAQItem
-                question="What happens if I run out of credits?"
-                answer="You can buy more credits once you've used up your current ones. We do it this way because each tier has different image quality."
+                question="What happens if I run out of images?"
+                answer="Once you've used your monthly allowance, you'll need to wait until the next billing cycle or upgrade to a higher plan for more images."
               />
               <FAQItem
-                question="Do credits expire?"
-                answer="Nope, your credits never expire. Keep them as long as you want."
+                question="Do unused images roll over?"
+                answer="No, unused images do not roll over to the next month. Each billing cycle refreshes your image allowance."
               />
               <FAQItem
-                question="Is there a free trial?"
-                answer="We don't have a trial, but you get 8 credits when you sign up to test things out."
+                question="What's the difference between 2K and 4K resolution?"
+                answer="Free plan provides 2K resolution images perfect for web use. Paid plans get 4K resolution images suitable for print and professional use."
+              />
+              <FAQItem
+                question="How many AI models and poses do I get?"
+                answer="Free plan: 4 models with 5 poses each (20 combinations). Paid plans: All 16 models with 5 poses each (80 combinations)."
               />
             </div>
           </div>
@@ -272,6 +544,9 @@ function PricingCard({
   features,
   buttonText,
   isPopular,
+  isCurrent,
+  isDisabled,
+  onUpgrade,
 }: {
   name: string;
   price: string;
@@ -279,6 +554,9 @@ function PricingCard({
   features: string[];
   buttonText: string;
   isPopular: boolean;
+  isCurrent: boolean;
+  isDisabled: boolean;
+  onUpgrade: () => void;
 }) {
   return (
     <div style={{
@@ -364,30 +642,41 @@ function PricingCard({
       </div>
 
       <button
+        onClick={onUpgrade}
+        disabled={isDisabled}
         style={{
           width: "100%",
           padding: "12px 24px",
-          backgroundColor: isPopular ? "#702dff" : "#f3f4f6",
-          color: isPopular ? "white" : "#202223",
+          backgroundColor: isDisabled 
+            ? "#e5e7eb" 
+            : isPopular ? "#702dff" : "#f3f4f6",
+          color: isDisabled 
+            ? "#9ca3af"
+            : isPopular ? "white" : "#202223",
           border: "none",
           borderRadius: "8px",
           fontSize: "14px",
           fontWeight: "600",
-          cursor: "pointer",
+          cursor: isDisabled ? "not-allowed" : "pointer",
           transition: "all 0.2s ease",
+          opacity: isDisabled ? 0.6 : 1,
         }}
         onMouseEnter={(e) => {
-          if (isPopular) {
-            e.currentTarget.style.backgroundColor = "#5c24cc";
-          } else {
-            e.currentTarget.style.backgroundColor = "#e5e7eb";
+          if (!isDisabled) {
+            if (isPopular) {
+              e.currentTarget.style.backgroundColor = "#5c24cc";
+            } else {
+              e.currentTarget.style.backgroundColor = "#e5e7eb";
+            }
           }
         }}
         onMouseLeave={(e) => {
-          if (isPopular) {
-            e.currentTarget.style.backgroundColor = "#702dff";
-          } else {
-            e.currentTarget.style.backgroundColor = "#f3f4f6";
+          if (!isDisabled) {
+            if (isPopular) {
+              e.currentTarget.style.backgroundColor = "#702dff";
+            } else {
+              e.currentTarget.style.backgroundColor = "#f3f4f6";
+            }
           }
         }}
       >

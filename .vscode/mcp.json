@@ -2,7 +2,23 @@
     "servers": {
         "shopify-dev-mcp": {
             "command": "npx",
-            "args": ["-y", "@shopify/dev-mcp@latest"]
+            "args": [
+                "-y",
+                "@shopify/dev-mcp@latest"
+            ]
+        },
+        "supabase": {
+            "command": "cmd",
+            "args": [
+                "/c",
+                "npx",
+                "-y",
+                "@supabase/mcp-server-supabase@latest",
+                "--project-ref=ywfspfprntmvvjhuoxup"
+            ],
+            "env": {
+                "SUPABASE_ACCESS_TOKEN": "sbp_f766e7c52c2337e01b5e90d671b8ba2f23f8617b"
+            }
         }
     }
 }

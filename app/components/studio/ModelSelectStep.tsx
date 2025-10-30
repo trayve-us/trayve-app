@@ -38,84 +38,74 @@ export function ModelSelectStep({
   const [selectedGender, setSelectedGender] = useState<string>("all");
   const [selectedBodyType, setSelectedBodyType] = useState<string>("all");
 
-  // Fetch models on component mount and when filters change
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        const filters: any = {
-          is_active: true,
-          // Note: Not filtering by promoted_only to show all active models
-        };
-        
-        if (selectedGender !== "all") filters.gender = selectedGender;
-        if (selectedBodyType !== "all") filters.body_type = selectedBodyType;
+  // Fetch models function
+  const fetchModels = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const filters: any = {
+        is_active: true,
+        promoted_only: false, // Show all active models, not just promoted
+      };
+      
+      if (selectedGender !== "all") filters.gender = selectedGender;
+      if (selectedBodyType !== "all") filters.body_type = selectedBodyType;
 
-        console.log('🔍 Fetching models with filters:', filters);
+      console.log('🔍 Fetching models with filters:', filters);
 
-        // Call Trayve backend API via server-side proxy (bypasses CORS)
-        const response = await fetch('/api/proxy/models?endpoint=/api/models/base-models', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ filters }),
-        });
+      // Call local Shopify API (uses Supabase directly)
+      const response = await fetch('/api/models', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ filters }),
+      });
 
-        console.log('📡 API Response status:', response.status);
-        console.log('📡 API Response headers:', Object.fromEntries(response.headers.entries()));
+      console.log('📡 API Response status:', response.status);
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('❌ API Error response:', errorText);
-          throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
-        }
-
-        const data = await response.json();
-        console.log('📦 API Response data:', data);
-        console.log('📦 API Response keys:', Object.keys(data));
-        
-        if (data.success && data.models) {
-          console.log(`✅ Received ${data.models.length} models from API`);
-          console.log('📋 First model:', data.models[0]);
-          
-          // Enrich models with access information based on subscription tier
-          const enrichedModels = enrichModelsWithAccess<BaseModel>(data.models, subscriptionTier);
-          console.log('🔐 Enriched models count:', enrichedModels.length);
-          console.log('🔐 First enriched model:', enrichedModels[0]);
-          
-          setModels(enrichedModels);
-        } else {
-          console.warn('⚠️ API response missing models or success flag:', data);
-          setError(`API returned success=${data.success}, models count=${data.models?.length || 0}`);
-        }
-      } catch (error) {
-        console.error("❌ Error fetching models:", error);
-        setError(error instanceof Error ? error.message : 'Unknown error occurred');
-      } finally {
-        setLoading(false);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-    };
 
-    fetchModels();
+      const data = await response.json();
+      console.log('📦 API Response data:', data);
+      
+      if (data.success && data.models) {
+        console.log(`✅ Received ${data.models.length} models from API`);
+        
+        // Enrich models with access information based on subscription tier
+        const enrichedModels = enrichModelsWithAccess<BaseModel>(data.models, subscriptionTier);
+        console.log('🔐 Enriched models count:', enrichedModels.length);
+        
+        setModels(enrichedModels);
+      } else {
+        console.warn('⚠️ No models returned');
+        setModels([]);
+      }
+    } catch (error) {
+      console.error("❌ Error fetching models:", error);
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch models on component mount and when filters change (with debouncing)
+  useEffect(() => {
+    // Debounce the API call to prevent rate limiting
+    const timer = setTimeout(() => {
+      fetchModels();
+    }, 500); // Wait 500ms after last filter change
+
+    return () => clearTimeout(timer);
   }, [selectedGender, selectedBodyType, subscriptionTier]);
 
   return (
     <div className="space-y-6 pb-20 sm:pb-24 md:pb-28">
-      {/* Debug Info */}
-      {process.env.NODE_ENV === 'development' && (
-        <div style={{ padding: '10px', background: '#f0f0f0', fontSize: '12px', fontFamily: 'monospace' }}>
-          <div>🔍 Debug Info:</div>
-          <div>Loading: {loading ? 'YES' : 'NO'}</div>
-          <div>Models Count: {models.length}</div>
-          <div>Subscription Tier: {subscriptionTier}</div>
-          <div>Selected Gender: {selectedGender}</div>
-          <div>Selected Body Type: {selectedBodyType}</div>
-          {error && <div style={{ color: 'red', marginTop: '8px' }}>Error: {error}</div>}
-        </div>
-      )}
 
       {/* Filters */}
       <div className="w-full px-3 sm:px-4 md:px-6">
@@ -247,7 +237,7 @@ export function ModelSelectStep({
       {/* Models Grid */}
       {!loading && models.length > 0 && (
         <div className="w-full px-3 sm:px-4 md:px-6">
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 md:gap-6">
             {models.map((model) => {
               const isSelected = selectedModel === model.id;
               const isLocked = model.accessInfo.isLocked;
@@ -274,14 +264,13 @@ export function ModelSelectStep({
                     }`}
                   >
                     {/* Model Image */}
-                    <div className="relative aspect-[3/4.5] overflow-hidden">
+                    <div className="relative aspect-[2/3] overflow-hidden">
                       <img
                         src={model.image_url}
                         alt={model.name}
+                        className="w-full h-full object-cover object-top"
                         style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
+                          objectPosition: "center top",
                         }}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
@@ -290,35 +279,16 @@ export function ModelSelectStep({
                         }}
                       />
 
-                      {/* Locked Overlay */}
-                      {isLocked && (
-                        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-10">
-                          <div className="text-center px-4">
-                            <Lock
-                              size={32}
-                              className="mx-auto mb-2"
-                              style={{ color: "white" }}
-                            />
-                            <div className="text-white text-sm font-semibold mb-1">
-                              Premium Model
-                            </div>
-                            <div className="text-white/80 text-xs">
-                              {model.accessInfo.upgradePrompt}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
                       {/* Simple Gradient Overlay */}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
 
-                      {/* Premium Badge (top-left corner) */}
+                      {/* Lock Badge - Top Left Corner (for locked models) */}
                       {isLocked && (
                         <div className="absolute top-3 left-3 z-20">
-                          <div className="flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-yellow-500/90 to-amber-500/90 backdrop-blur-sm rounded-md">
-                            <Lock size={12} style={{ color: "white" }} />
-                            <span className="text-white text-xs font-bold">
-                              PREMIUM
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-primary backdrop-blur-sm rounded-lg shadow-lg">
+                            <Lock className="w-3.5 h-3.5 text-white" />
+                            <span className="text-white text-xs font-medium">
+                              Locked
                             </span>
                           </div>
                         </div>

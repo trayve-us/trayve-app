@@ -17,50 +17,81 @@ interface PoseSelectStepProps {
   selectedModel: string | null;
   selectedPoses: string[];
   onPoseSelect: (poseId: string) => void;
+  onPoseObjectsChange?: (poses: ModelPose[]) => void;
 }
 
 export function PoseSelectStep({
   selectedModel,
   selectedPoses,
   onPoseSelect,
+  onPoseObjectsChange,
 }: PoseSelectStepProps) {
   const [poses, setPoses] = useState<ModelPose[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch poses when model is selected
-  useEffect(() => {
-    const fetchPoses = async () => {
-      if (!selectedModel) {
+  // Fetch poses function
+  const fetchPoses = async () => {
+    if (!selectedModel) {
+      setPoses([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      console.log('🔍 Fetching poses for model:', selectedModel);
+      
+      // Call local Shopify API (uses Supabase directly)
+      const response = await fetch(
+        `/api/models?type=poses&base_model_id=${selectedModel}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      console.log('📡 Poses API Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('📦 Poses API Response:', data);
+      
+      if (data.success && data.poses) {
+        console.log(`✅ Received ${data.poses.length} poses`);
+        setPoses(data.poses);
+        
+        // Notify parent component of pose objects
+        if (onPoseObjectsChange) {
+          onPoseObjectsChange(data.poses);
+        }
+      } else {
+        console.warn('⚠️ No poses returned');
         setPoses([]);
-        setLoading(false);
-        return;
       }
+    } catch (error) {
+      console.error("❌ Error fetching poses:", error);
+      setPoses([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      try {
-        setLoading(true);
-        
-        // Call Trayve backend API via server-side proxy (bypasses CORS)
-        const response = await fetch(
-          `/api/proxy/models?endpoint=/api/models/poses&base_model_id=${selectedModel}`
-        );
+  // Fetch poses when model is selected (with debouncing)
+  useEffect(() => {
+    // Debounce to prevent rate limiting
+    const timer = setTimeout(() => {
+      fetchPoses();
+    }, 300); // Wait 300ms
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.success && data.poses) {
-          setPoses(data.poses);
-        }
-      } catch (error) {
-        console.error("Error fetching poses:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchPoses();
+    return () => clearTimeout(timer);
   }, [selectedModel]);
 
   // Show message if no model selected
@@ -110,14 +141,14 @@ export function PoseSelectStep({
                     }`}
                   >
                     {/* Pose Image */}
-                    <div className="relative overflow-hidden">
+                    <div className="relative overflow-hidden bg-gray-50">
                       <img
                         src={pose.image_url}
                         alt={pose.name}
                         style={{
                           width: "100%",
                           aspectRatio: "3/4",
-                          objectFit: "cover",
+                          objectFit: "contain",
                         }}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;

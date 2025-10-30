@@ -1,12 +1,12 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate, useSearchParams, useFetcher } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { getShopifyUserByShop } from "../lib/auth.server";
 import { getUserCreditBalance } from "../lib/credits.server";
 import { type SubscriptionTier } from "../lib/model-access";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { UserProfile } from "../components/UserProfile";
 import { UploadStep } from "../components/studio/UploadStep";
@@ -44,11 +44,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function Studio() {
   const { credits, user } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const fetcher = useFetcher();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [currentStep, setCurrentStep] = useState(1);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [selectedPoses, setSelectedPoses] = useState<string[]>([]);
+  const [selectedPoseObjects, setSelectedPoseObjects] = useState<any[]>([]);
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
+  // Check for subscription success message
+  const subscribed = searchParams.get('subscribed');
+  const planName = searchParams.get('plan');
+  const creditsAdded = searchParams.get('credits');
+
+  useEffect(() => {
+    if (subscribed === 'true' && planName && creditsAdded) {
+      setShowSuccessBanner(true);
+      // Auto-hide after 10 seconds
+      const timer = setTimeout(() => {
+        setShowSuccessBanner(false);
+        // Clean up URL params
+        searchParams.delete('subscribed');
+        searchParams.delete('plan');
+        searchParams.delete('credits');
+        setSearchParams(searchParams, { replace: true });
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [subscribed, planName, creditsAdded, searchParams, setSearchParams]);
 
   const steps = [
     {
@@ -128,8 +155,56 @@ export default function Studio() {
     });
   };
 
-  const handleGenerate = () => {
-    alert("Generation started! This will be connected to your API.");
+  const handleGenerate = async () => {
+    const CREDITS_PER_IMAGE = 1000;
+    const totalCredits = selectedPoses.length * CREDITS_PER_IMAGE;
+
+    // Check if user has enough credits
+    if (credits.available < totalCredits) {
+      setGenerationError(`Insufficient credits. You need ${totalCredits} credits but only have ${credits.available}.`);
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationError(null);
+
+    try {
+      // Deduct credits via API
+      const response = await fetch("/api/credits/deduct", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: totalCredits,
+          description: `AI Generation: ${selectedPoses.length} images`,
+          featureType: "ai_generation",
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        setGenerationError(result.error || "Failed to deduct credits");
+        setIsGenerating(false);
+        return;
+      }
+
+      console.log("✅ Credits deducted:", result.creditsConsumed);
+      console.log("✅ Remaining balance:", result.remainingBalance);
+
+      // TODO: Call your actual generation API here
+      // For now, just show success
+      alert(`Generation started! ${result.creditsConsumed} credits deducted. Remaining: ${result.remainingBalance}`);
+
+      // Reload to update credit balance
+      window.location.reload();
+    } catch (error: any) {
+      console.error("Generation error:", error);
+      setGenerationError(error.message || "Failed to start generation");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const canProceed = () => {
@@ -247,6 +322,54 @@ export default function Studio() {
           </div>
         </div>
       </div>
+
+      {/* Success Banner */}
+      {showSuccessBanner && (
+        <div style={{
+          backgroundColor: "#D1F4E0",
+          borderBottom: "1px solid #9CDEBD",
+          padding: "12px 24px",
+        }}>
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            maxWidth: "1400px",
+            margin: "0 auto",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="9" fill="#00A663" />
+                <path d="M6 10l3 3 5-6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span style={{ color: "#004C3F", fontWeight: 500 }}>
+                <strong>Payment successful!</strong> {creditsAdded} images have been added to your monthly allowance for the {planName}.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setShowSuccessBanner(false);
+                searchParams.delete('subscribed');
+                searchParams.delete('plan');
+                searchParams.delete('credits');
+                setSearchParams(searchParams, { replace: true });
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                color: "#004C3F",
+                fontSize: "20px",
+                lineHeight: 1,
+              }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Studio Container - Exact Trayve Design */}
       <div style={{
@@ -388,17 +511,55 @@ export default function Studio() {
                 selectedModel={selectedModel}
                 selectedPoses={selectedPoses}
                 onPoseSelect={handlePoseSelect}
+                onPoseObjectsChange={setSelectedPoseObjects}
               />
             )}
 
             {/* Step 4: Confirm & Generate */}
             {currentStep === 4 && (
-              <ConfirmStep
-                previewUrl={previewUrl}
-                selectedModel={selectedModel}
-                selectedPoses={selectedPoses}
-                onGenerate={handleGenerate}
-              />
+              <>
+                {generationError && (
+                  <div style={{
+                    backgroundColor: "#FEE2E2",
+                    borderLeft: "4px solid #EF4444",
+                    padding: "16px",
+                    marginBottom: "24px",
+                    borderRadius: "8px",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="9" fill="#EF4444" />
+                        <path d="M10 6v5M10 13v1" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      <div>
+                        <strong style={{ color: "#7F1D1D" }}>Error:</strong>
+                        <span style={{ color: "#991B1B", marginLeft: "8px" }}>{generationError}</span>
+                      </div>
+                      <button
+                        onClick={() => setGenerationError(null)}
+                        style={{
+                          marginLeft: "auto",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#7F1D1D",
+                          fontSize: "20px",
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <ConfirmStep
+                  previewUrl={previewUrl}
+                  selectedModel={selectedModel}
+                  selectedPoses={selectedPoses}
+                  selectedPoseObjects={selectedPoseObjects}
+                  onGenerate={handleGenerate}
+                  isGenerating={isGenerating}
+                />
+              </>
             )}
           </div>
         </div>

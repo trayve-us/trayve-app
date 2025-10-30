@@ -4,7 +4,8 @@
  */
 
 import { useState } from "react";
-import { User, MessageCircle, HelpCircle } from "lucide-react";
+import { useNavigate } from "@remix-run/react";
+import { User, MessageCircle, HelpCircle, Settings } from "lucide-react";
 
 interface UserProfileProps {
   email: string;
@@ -13,13 +14,13 @@ interface UserProfileProps {
 
 export function UserProfile({ email, shopName }: UserProfileProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div style={{ position: "relative" }}>
       {/* Profile Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        onBlur={() => setTimeout(() => setIsOpen(false), 200)}
         style={{
           width: "40px",
           height: "40px",
@@ -115,6 +116,38 @@ export function UserProfile({ email, shopName }: UserProfileProps) {
 
           {/* Menu Items */}
           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault();
+                navigate("/app/settings");
+                setIsOpen(false);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: "none",
+                background: "transparent",
+                color: "#202223",
+                fontSize: "14px",
+                transition: "background-color 0.2s ease",
+                cursor: "pointer",
+                width: "100%",
+                textAlign: "left",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "#f9fafb";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+              }}
+            >
+              <Settings size={18} color="#6b7280" />
+              <span>Settings</span>
+            </button>
+
             <a
               href="mailto:support@trayve.com"
               style={{

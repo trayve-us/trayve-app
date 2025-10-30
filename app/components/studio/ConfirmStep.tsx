@@ -2,19 +2,41 @@ import { Camera } from "lucide-react";
 
 const CREDITS_PER_GENERATION = 1000;
 
+interface ModelPose {
+  id: string;
+  base_model_id: string;
+  name: string;
+  description?: string;
+  pose_type: "front" | "side" | "three-quarter" | "back" | "dynamic" | "seated";
+  image_url: string;
+  supabase_path: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
 interface ConfirmStepProps {
   previewUrl: string | null;
   selectedModel: string | null;
   selectedPoses: string[];
+  selectedPoseObjects?: ModelPose[];
   onGenerate: () => void;
+  isGenerating?: boolean;
 }
 
 export function ConfirmStep({
   previewUrl,
   selectedModel,
   selectedPoses,
+  selectedPoseObjects = [],
   onGenerate,
+  isGenerating = false,
 }: ConfirmStepProps) {
+  // Get actual pose objects for the selected pose IDs
+  const selectedPoseData = selectedPoseObjects.filter(pose => 
+    selectedPoses.includes(pose.id)
+  );
+
   return (
     <div className="w-full lg:max-w-7xl space-y-4 sm:space-y-6 lg:space-y-8 pb-8 sm:pb-12 lg:pb-0 overflow-y-auto">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
@@ -79,12 +101,14 @@ export function ConfirmStep({
               {selectedPoses.length > 0 ? (
                 <div>
                   <div className="grid grid-cols-3 gap-1 sm:gap-1.5">
-                    {selectedPoses.slice(0, 2).map((pose, index) => (
-                      <div key={pose} className="relative">
-                        <div className="aspect-[3/5] rounded-md overflow-hidden bg-muted border border-border flex items-center justify-center">
-                          <span className="text-muted-foreground text-xs">
-                            Pose {index + 1}
-                          </span>
+                    {selectedPoseData.slice(0, 2).map((pose, index) => (
+                      <div key={pose.id} className="relative">
+                        <div className="aspect-[3/5] rounded-md overflow-hidden bg-gray-50 border border-border">
+                          <img
+                            src={pose.image_url}
+                            alt={pose.name || `Pose ${index + 1}`}
+                            className="w-full h-full object-contain"
+                          />
                         </div>
                         <div className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-medium border border-background">
                           {index + 1}
@@ -144,11 +168,34 @@ export function ConfirmStep({
                 disabled={
                   !previewUrl ||
                   !selectedModel ||
-                  selectedPoses.length === 0
+                  selectedPoses.length === 0 ||
+                  isGenerating
                 }
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-2 sm:py-2.5 rounded-xl font-semibold shadow-lg transition-all duration-200 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
-                Generate {selectedPoses.length === 1 ? "Image" : "Images"}
+                {isGenerating ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        fill="none"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    Generating...
+                  </span>
+                ) : (
+                  `Generate ${selectedPoses.length === 1 ? "Image" : "Images"}`
+                )}
               </button>
             </div>
           </div>

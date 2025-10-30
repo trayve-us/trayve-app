@@ -79,7 +79,7 @@ export async function hasSufficientCredits(
 
 /**
  * Consume credits for a user action
- * Uses the same RPC function as the main Trayve app
+ * Uses the consume_user_credits RPC function
  */
 export async function consumeUserCredits(
   userId: string,
@@ -88,12 +88,12 @@ export async function consumeUserCredits(
   featureType: string = "ai_generation"
 ): Promise<CreditUsageResult> {
   try {
-    // Use the secure consume_credits RPC function (same as main app)
-    const { data, error } = await supabaseAdmin.rpc("consume_credits", {
+    // Use the secure consume_user_credits RPC function
+    const { data, error } = await supabaseAdmin.rpc("consume_user_credits", {
       p_user_id: userId,
-      p_credits: amount,
+      p_amount: amount,
       p_description: description,
-      p_feature_type: featureType,
+      p_reference_type: featureType,
     });
 
     if (error) {

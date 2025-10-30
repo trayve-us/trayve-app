@@ -196,3 +196,25 @@ export async function deactivateShopifyUser(
 
   console.log(`✅ Deactivated Shopify user: ${shopDomain}`);
 }
+
+/**
+ * Update Shopify user metadata (for subscription information, etc.)
+ */
+export async function updateShopifyUserMetadata(
+  userId: string,
+  metadata: Record<string, any>
+): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("shopify_users")
+    .update({
+      metadata,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  if (error) {
+    throw new Error(`Failed to update user metadata: ${error.message}`);
+  }
+
+  console.log(`✅ Updated metadata for user: ${userId}`);
+}
