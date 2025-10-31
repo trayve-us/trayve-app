@@ -6,8 +6,8 @@
  */
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop, updateShopifyUserMetadata } from "../lib/auth.server";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop, updateShopifyUserMetadata } from "../lib/auth";
 import { cancelSubscriptionWithCredits } from "../lib/services/subscription.service";
 
 export const action = async ({ request }: ActionFunctionArgs) => {

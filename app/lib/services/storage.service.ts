@@ -3,7 +3,7 @@
  * Handles all operations related to Supabase storage buckets
  */
 
-import { supabaseAdmin } from "../supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 
 // =============================================
 // STORAGE BUCKETS

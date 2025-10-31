@@ -15,7 +15,8 @@ interface CreditBalance {
   used_credits: number;
   available_credits: number;
   updated_at: string;
-  plan?: string; // Add plan information
+  plan?: string;
+  plan_tier?: string;
 }
 
 export function CreditsDisplay() {
@@ -26,6 +27,8 @@ export function CreditsDisplay() {
     total_credits?: number;
     used_credits?: number;
     available_credits?: number;
+    plan?: string;
+    plan_tier?: string;
     updated_at?: string;
     error?: string;
   }>();
@@ -50,6 +53,8 @@ export function CreditsDisplay() {
         total_credits: fetcher.data.total_credits || 0,
         used_credits: fetcher.data.used_credits || 0,
         available_credits: fetcher.data.available_credits || 0,
+        plan: fetcher.data.plan || "Free Plan",
+        plan_tier: fetcher.data.plan_tier || "free",
         updated_at: fetcher.data.updated_at || "",
       });
       setLoading(false);

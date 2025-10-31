@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "./supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 
 /**
  * Store charge_id to shop mapping in Supabase

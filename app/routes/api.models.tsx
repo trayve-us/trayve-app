@@ -6,7 +6,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import { authenticate } from "../config/shopify.server";
 import {
   getBaseModels,
   getBaseModelById,

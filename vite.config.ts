@@ -66,6 +66,7 @@ export default defineConfig({
   ],
   build: {
     assetsInlineLimit: 0,
+    cssMinify: false, // Disable CSS minification to avoid Polaris CSS syntax warnings
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react", "@shopify/polaris"],

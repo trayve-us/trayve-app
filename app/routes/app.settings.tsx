@@ -1,10 +1,10 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
-import { authenticate } from "../shopify.server";
-import { getShopifyStore } from "../lib/shopify-session.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyStore } from "../lib/shopify";
+import { getShopifyUserByShop } from "../lib/auth";
 import { getActiveSubscription } from "../lib/services/subscription.service";
-import { getUserCreditBalance } from "../lib/credits.server";
+import { getUserCreditBalance } from "../lib/credits";
 import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 

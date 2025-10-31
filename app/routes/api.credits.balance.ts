@@ -4,9 +4,10 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
-import { getUserCreditBalance } from "../lib/credits.server";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop } from "../lib/auth";
+import { getUserCreditBalance } from "../lib/credits";
+import { getActiveSubscription } from "../lib/services/subscription.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -30,6 +31,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Get credit balance
     const balance = await getUserCreditBalance(shopifyUser.trayve_user_id);
+    
+    // Get active subscription to determine plan
+    const activeSubscription = await getActiveSubscription(shopifyUser.trayve_user_id);
+    const planTier = activeSubscription?.plan_tier || 'free';
+    
+    // Map plan tier to display name
+    const planNames: Record<string, string> = {
+      'free': 'Free Plan',
+      'creator': 'Creator Plan',
+      'professional': 'Professional Plan',
+      'enterprise': 'Enterprise Plan',
+    };
 
     if (!balance) {
       return json({
@@ -39,6 +52,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         total_credits: 0,
         used_credits: 0,
         available_credits: 0,
+        plan: planNames[planTier] || 'Free Plan',
+        plan_tier: planTier,
         updated_at: new Date().toISOString(),
       });
     }
@@ -50,6 +65,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       total_credits: balance.total_credits,
       used_credits: balance.used_credits,
       available_credits: balance.available_credits,
+      plan: planNames[planTier] || 'Free Plan',
+      plan_tier: planTier,
       updated_at: balance.updated_at,
     });
   } catch (error: any) {

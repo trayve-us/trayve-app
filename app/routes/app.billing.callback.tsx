@@ -1,7 +1,7 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop, updateShopifyUserMetadata } from "../lib/auth.server";
-import { createSubscription, getSubscriptionPlan } from "../lib/services/subscription.service";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop, updateShopifyUserMetadata } from "../lib/auth";
+import { createSubscription, getSubscriptionPlan, getActiveSubscription } from "../lib/services/subscription.service";
 
 const PLAN_NAME_TO_TIER = {
   "Creator Plan": "creator",
@@ -67,7 +67,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           return authenticatedRedirect("/app/pricing?error=user_not_found");
         }
 
-        console.log("��� Creating subscription for", session.shop);
+        // CRITICAL: Check if subscription already exists to prevent duplicates
+        const existingSubscription = await getActiveSubscription(user.trayve_user_id);
+        
+        if (existingSubscription && existingSubscription.shopify_charge_id === activeSubscription.id) {
+          console.log("⚠️  Subscription already exists for this charge, skipping creation");
+          console.log("   Redirecting to studio with existing subscription");
+          
+          // Clean up pending charge if it exists
+          if (chargeId) {
+            try {
+              const { deletePendingCharge } = await import('../lib/shopify');
+              await deletePendingCharge(chargeId);
+            } catch (err) {
+              console.error('❌ Failed to delete pending charge:', err);
+            }
+          }
+          
+          return authenticatedRedirect(`/app/studio?subscribed=true&plan=${encodeURIComponent(planName)}&credits=${plan.images_per_month}`);
+        }
+
+        console.log("🆕 Creating subscription for", session.shop);
         await createSubscription({
           trayve_user_id: user.trayve_user_id,
           shop: session.shop,
@@ -95,7 +115,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // Clean up the pending charge mapping from Supabase
         if (chargeId) {
           try {
-            const { deletePendingCharge } = await import('../lib/pending-charges.server');
+            const { deletePendingCharge } = await import('../lib/shopify');
             await deletePendingCharge(chargeId);
             console.log(`🗑️  Cleaned up pending charge: ${chargeId}`);
           } catch (err) {

@@ -3,7 +3,7 @@
  * Stores Shopify merchant sessions in the same database as main Trayve app
  */
 
-import { supabaseAdmin } from './supabase.server';
+import { supabaseAdmin } from '../storage/supabase.server';
 
 export interface ShopifyStore {
   id: string;

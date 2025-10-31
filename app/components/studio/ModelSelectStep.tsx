@@ -4,7 +4,7 @@ import {
   enrichModelsWithAccess, 
   type SubscriptionTier, 
   type EnrichedModel 
-} from "../../lib/model-access";
+} from "../../lib/services/model-access.service";
 
 interface BaseModel {
   id: string;

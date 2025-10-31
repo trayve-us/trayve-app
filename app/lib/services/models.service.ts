@@ -3,7 +3,7 @@
  * Handles all operations related to base models and poses
  */
 
-import { supabaseAdmin } from "../supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 import type { UploadResult } from "./storage.service";
 
 // =============================================

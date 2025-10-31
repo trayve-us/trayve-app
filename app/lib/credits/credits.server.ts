@@ -3,14 +3,17 @@
  * Manages credits for Shopify users (same tables as main Trayve app)
  */
 
-import { supabaseAdmin } from "./supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 
 export interface CreditBalance {
   user_id: string;
   total_credits: number;
   used_credits: number;
   available_credits: number;
+  bonus_credits: number;
+  signup_bonus_received: boolean;
   updated_at: string;
+  last_refill_at?: string;
 }
 
 export interface CreditTransaction {
@@ -57,7 +60,10 @@ export async function getUserCreditBalance(
       used_credits: data.used_credits || 0,
       available_credits:
         (data.total_credits || 0) - (data.used_credits || 0),
+      bonus_credits: data.bonus_credits || 0,
+      signup_bonus_received: data.signup_bonus_received || false,
       updated_at: data.updated_at,
+      last_refill_at: data.last_refill_at,
     };
   } catch (error) {
     console.error("Error fetching credit balance:", error);

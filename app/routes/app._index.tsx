@@ -2,9 +2,9 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { Page, Layout, Card, Button, BlockStack, Text, Banner } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-import { getOrCreateShopifyUser } from "../lib/auth.server";
-import { getUserCreditBalance } from "../lib/credits.server";
+import { authenticate } from "../config/shopify.server";
+import { getOrCreateShopifyUser } from "../lib/auth";
+import { getUserCreditBalance } from "../lib/credits";
 import { useEffect } from "react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

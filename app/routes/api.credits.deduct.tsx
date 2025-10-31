@@ -4,9 +4,9 @@
  */
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
-import { consumeUserCredits, CREDIT_COSTS } from "../lib/credits.server";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop } from "../lib/auth";
+import { consumeUserCredits, CREDIT_COSTS } from "../lib/credits";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {

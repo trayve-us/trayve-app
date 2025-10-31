@@ -30,7 +30,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // This is necessary because Shopify doesn't include shop in the callback URL
   if (!shop) {
     try {
-      const { getPendingChargeShop } = await import('../lib/pending-charges.server');
+      const { getPendingChargeShop } = await import('../lib/shopify');
       shop = await getPendingChargeShop(chargeId);
       
       if (shop) {

@@ -1,8 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import db from "../db.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
-import { updateSubscriptionStatus } from "../lib/services/subscription.service";
+import { authenticate } from "../../config/shopify.server";
+import db from "../../config/db.server";
+import { getShopifyUserByShop } from "../../lib/auth";
+import { updateSubscriptionStatus } from "../../lib/services/subscription.service";
 
 /**
  * Webhook handler for APP_SUBSCRIPTIONS_UPDATE

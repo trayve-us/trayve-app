@@ -2,11 +2,11 @@ import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from
 import { useLoaderData, useNavigate, useSubmit, useActionData } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
-import { getUserCreditBalance } from "../lib/credits.server";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop } from "../lib/auth";
+import { getUserCreditBalance } from "../lib/credits";
 import { getActiveSubscription } from "../lib/services/subscription.service";
-import { storePendingCharge } from "../lib/pending-charges.server";
+import { storePendingCharge } from "../lib/shopify";
 import { UserProfile } from "../components/UserProfile";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { useEffect } from "react";
@@ -18,6 +18,7 @@ const SUBSCRIPTION_PLANS = {
     displayName: "Creator",
     price: 29.0,
     images: 30,
+    credits: 30000,
     tier: "starter" as const,
   },
   professional: {
@@ -25,6 +26,7 @@ const SUBSCRIPTION_PLANS = {
     displayName: "Professional",
     price: 89.0,
     images: 95,
+    credits: 95000,
     tier: "professional" as const,
   },
   enterprise: {
@@ -32,6 +34,7 @@ const SUBSCRIPTION_PLANS = {
     displayName: "Enterprise",
     price: 199.0,
     images: 220,
+    credits: 220000,
     tier: "enterprise" as const,
   },
 };
@@ -182,7 +185,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         
         // Store the charge_id to shop mapping in Supabase
         try {
-          const { storePendingCharge } = await import('../lib/pending-charges.server');
+          const { storePendingCharge } = await import('../lib/shopify');
           await storePendingCharge(chargeId, session.shop);
           console.log(`💾 Stored charge mapping: ${chargeId} -> ${session.shop}`);
         } catch (err) {
@@ -442,6 +445,8 @@ export default function Pricing() {
               period="month"
               features={[
                 "30 images/month",
+                "30,000 credits/month",
+                "+ 2,000 bonus credits (one-time)",
                 "4K resolution",
                 "All 16 AI models",
                 "80 pose combinations",
@@ -462,6 +467,8 @@ export default function Pricing() {
               period="month"
               features={[
                 "95 images/month",
+                "95,000 credits/month",
+                "+ 2,000 bonus credits (one-time)",
                 "4K resolution",
                 "All 16 AI models",
                 "80 pose combinations",
@@ -482,11 +489,14 @@ export default function Pricing() {
               period="month"
               features={[
                 "220 images/month",
+                "220,000 credits/month",
+                "+ 2,000 bonus credits (one-time)",
                 "4K resolution",
                 "All 16 AI models",
                 "80 pose combinations",
                 "Priority processing",
                 "Priority support",
+                "API access",
               ]}
               buttonText={currentPlan === "enterprise" ? "Current Plan" : "Upgrade"}
               isPopular={false}

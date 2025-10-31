@@ -2,10 +2,11 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate, useSearchParams, useFetcher } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-import { getShopifyUserByShop } from "../lib/auth.server";
-import { getUserCreditBalance } from "../lib/credits.server";
-import { type SubscriptionTier } from "../lib/model-access";
+import { authenticate } from "../config/shopify.server";
+import { getShopifyUserByShop } from "../lib/auth";
+import { getUserCreditBalance } from "../lib/credits";
+import { type SubscriptionTier } from "../lib/services/model-access.service";
+import { getActiveSubscription } from "../lib/services/subscription.service";
 import { useState, useEffect } from "react";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { UserProfile } from "../components/UserProfile";
@@ -21,9 +22,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getShopifyUserByShop(shop);
   const balance = user ? await getUserCreditBalance(user.trayve_user_id) : null;
 
-  // TODO: Fetch subscription tier from Shopify app charges or user_subscriptions table
-  // For now, default to "free" tier. Premium features will show locked state.
-  const subscriptionTier: SubscriptionTier = "free";
+  // Fetch actual subscription tier from database
+  let subscriptionTier: SubscriptionTier = "free";
+  
+  if (user?.trayve_user_id) {
+    const activeSubscription = await getActiveSubscription(user.trayve_user_id);
+    
+    if (activeSubscription && activeSubscription.status === "active") {
+      // Map plan_tier to SubscriptionTier
+      const planTier = activeSubscription.plan_tier;
+      
+      if (planTier === "professional") {
+        subscriptionTier = "professional";
+      } else if (planTier === "enterprise") {
+        subscriptionTier = "enterprise";
+      } else if (planTier === "creator") {
+        subscriptionTier = "starter"; // Creator plan maps to starter tier
+      } else if (planTier === "free") {
+        subscriptionTier = "free";
+      }
+      
+      console.log(`✅ User ${user.trayve_user_id} has active ${planTier} subscription - tier: ${subscriptionTier}`);
+    } else {
+      console.log(`ℹ️ User ${user.trayve_user_id} has no active subscription - using free tier`);
+    }
+  }
 
   return json({
     shop,

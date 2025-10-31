@@ -3,7 +3,7 @@
  * Handles Shopify subscription plan operations and credit allocation
  */
 
-import { supabaseAdmin } from "../supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 
 // =============================================
 // TYPE DEFINITIONS
@@ -111,11 +111,35 @@ export async function getSubscriptionPlan(
 /**
  * Create a new subscription record
  * The database trigger will automatically allocate credits when status is 'active'
+ * CRITICAL: Checks for existing subscriptions to prevent duplicates
  */
 export async function createSubscription(
   params: CreateSubscriptionParams
 ): Promise<UserSubscription> {
   try {
+    // CRITICAL: Check for duplicate subscription with same charge_id
+    if (params.shopify_charge_id) {
+      const { data: existingCharge, error: checkError } = await supabaseAdmin
+        .from("shopify_user_subscriptions")
+        .select("id, status, shopify_charge_id")
+        .eq("shopify_charge_id", params.shopify_charge_id)
+        .maybeSingle();
+
+      if (existingCharge) {
+        console.warn(`⚠️  Subscription already exists for charge_id: ${params.shopify_charge_id}`);
+        console.warn(`   Existing subscription ID: ${existingCharge.id}, status: ${existingCharge.status}`);
+        throw new Error(`Subscription already exists for charge ${params.shopify_charge_id}`);
+      }
+    }
+
+    // CRITICAL: Check for existing active subscription for this user
+    const existingActive = await getActiveSubscription(params.trayve_user_id);
+    if (existingActive && params.status === 'active') {
+      console.warn(`⚠️  User ${params.trayve_user_id} already has an active subscription`);
+      console.warn(`   Existing: ${existingActive.plan_tier}, New: ${params.plan_tier}`);
+      throw new Error(`User already has an active subscription: ${existingActive.plan_tier}`);
+    }
+
     // Prepare insert data - explicitly exclude generated columns
     const insertData = {
       trayve_user_id: params.trayve_user_id,
@@ -136,6 +160,12 @@ export async function createSubscription(
 
     if (error) {
       console.error("Error creating subscription:", error);
+      
+      // Check if it's a unique constraint violation
+      if (error.code === '23505') {
+        throw new Error("Duplicate subscription detected. This subscription already exists.");
+      }
+      
       throw new Error(`Failed to create subscription: ${error.message}`);
     }
 
@@ -315,10 +345,11 @@ export async function cancelSubscriptionWithCredits(
     const totalCredits = creditData?.total_credits || 0;
     const usedCredits = creditData?.used_credits || 0;
     const currentAvailableCredits = totalCredits - usedCredits;
-    const creditsToDeduct = activeSubscription.images_allocated;
+    
+    // Calculate credits to deduct (images_allocated * 1000)
+    const creditsToDeduct = (activeSubscription.images_allocated || 0) * 1000;
 
-    // Calculate new used_credits (deducting from available means increasing used)
-    // But we need to decrease total_credits instead since we're removing allocated credits
+    // Calculate new total_credits by reducing the allocated credits
     const newTotalCredits = Math.max(0, totalCredits - creditsToDeduct);
     const actualDeducted = totalCredits - newTotalCredits;
 

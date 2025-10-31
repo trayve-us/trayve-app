@@ -4,8 +4,8 @@
  */
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import { getOrCreateShopifyUser } from "../lib/auth.server";
+import { authenticate } from "../config/shopify.server";
+import { getOrCreateShopifyUser } from "../lib/auth";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {

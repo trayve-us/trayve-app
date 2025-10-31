@@ -4,9 +4,9 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import { authenticate } from "../config/shopify.server";
 import { getActiveSubscription } from "../lib/services/subscription.service";
-import { getShopifyUserByShop } from "../lib/auth.server";
+import { getShopifyUserByShop } from "../lib/auth";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   try {

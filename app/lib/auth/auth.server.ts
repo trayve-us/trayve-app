@@ -3,7 +3,7 @@
  * Maps Shopify shops to Trayve user IDs
  */
 
-import { supabaseAdmin } from "./supabase.server";
+import { supabaseAdmin } from "../storage/supabase.server";
 import crypto from "crypto";
 
 export interface ShopifyUser {

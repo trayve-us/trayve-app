@@ -59,12 +59,15 @@ export function isModelLocked(
   modelName: string,
   tier: SubscriptionTier
 ): boolean {
-  // All models are accessible for paid tiers
+  // All models are unlocked for users with ANY paid plan
+  // Once a user purchases any plan (starter, professional, enterprise),
+  // they get access to all models
   if (tier !== "free") {
     return false;
   }
 
-  // For free tier, only specific models are accessible
+  // For free tier users only, lock premium models
+  // Free users can only access specific free-tier models
   return !isFreeTierModel(modelName);
 }
 
@@ -93,12 +96,15 @@ export function getModelAccessInfo(
 ): ModelAccessInfo {
   const locked = isModelLocked(modelName, tier);
   const canAccess = !locked;
+  
+  // Free tier models are accessible to everyone
+  // Premium models require any paid plan (starter, professional, or enterprise)
   const requiredTier: SubscriptionTier = isFreeTierModel(modelName)
     ? "free"
-    : "starter";
+    : "starter"; // Any paid plan unlocks all models
 
   const upgradePrompt = locked
-    ? "Upgrade to access"
+    ? "Upgrade to any plan to unlock all models"
     : undefined;
 
   return {
