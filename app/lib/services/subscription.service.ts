@@ -314,6 +314,10 @@ export async function cancelSubscription(
  * Cancel active subscription and deduct remaining credits
  * @param trayveUserId - User's Trayve ID
  * @returns Updated subscription and credit balance
+ * 
+ * IMPORTANT: We do NOT actually deduct credits when canceling.
+ * The user keeps their remaining credits that they already paid for.
+ * We just mark the subscription as cancelled so no new credits are allocated.
  */
 export async function cancelSubscriptionWithCredits(
   trayveUserId: string
@@ -345,51 +349,20 @@ export async function cancelSubscriptionWithCredits(
     const totalCredits = creditData?.total_credits || 0;
     const usedCredits = creditData?.used_credits || 0;
     const currentAvailableCredits = totalCredits - usedCredits;
-    
-    // Calculate credits to deduct (images_allocated * 1000)
-    const creditsToDeduct = (activeSubscription.images_allocated || 0) * 1000;
 
-    // Calculate new total_credits by reducing the allocated credits
-    const newTotalCredits = Math.max(0, totalCredits - creditsToDeduct);
-    const actualDeducted = totalCredits - newTotalCredits;
-
-    // Update credit balance by reducing total_credits
-    const { error: updateError } = await supabaseAdmin
-      .from("user_credits")
-      .update({
-        total_credits: newTotalCredits,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", trayveUserId);
-
-    if (updateError) {
-      console.error("Error updating credits:", updateError);
-      throw new Error("Failed to deduct credits");
-    }
-
-    const newBalance = newTotalCredits - usedCredits;
-
-    // Cancel the subscription
+    // Cancel the subscription (just mark as cancelled, don't touch credits)
     const cancelledSubscription = await updateSubscriptionStatus(
       activeSubscription.id,
-      'cancelled',
-      {
-        ...activeSubscription.metadata,
-        cancellation_reason: 'user_initiated',
-        credits_deducted: actualDeducted,
-        credits_before_cancellation: currentAvailableCredits,
-        credits_after_cancellation: newBalance,
-      }
+      'cancelled'
     );
 
-    console.log(`✅ Cancelled subscription for user ${trayveUserId}`);
-    console.log(`   Credits deducted: ${actualDeducted}`);
-    console.log(`   New balance: ${newBalance}`);
+    console.log(`✅ Subscription cancelled for user ${trayveUserId}`);
+    console.log(`   User keeps their remaining ${currentAvailableCredits} credits`);
 
     return {
       subscription: cancelledSubscription,
-      creditsDeducted: actualDeducted,
-      newBalance,
+      creditsDeducted: 0, // We don't deduct credits
+      newBalance: currentAvailableCredits,
     };
   } catch (error) {
     console.error("Error in cancelSubscriptionWithCredits:", error);

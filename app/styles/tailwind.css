@@ -5,30 +5,30 @@
 @layer base {
   :root {
     /* Exact colors from main Trayve app - converted from hex to HSL for Tailwind */
-    --background: 60 100% 98.8%;      /* #fffefa */
-    --foreground: 0 0% 0%;             /* #000000 */
-    --card: 60 100% 98.8%;             /* #fffefa */
-    --card-foreground: 0 0% 0%;        /* #000000 */
-    --popover: 30 100% 97.6%;          /* #fff8f3 */
-    --popover-foreground: 0 0% 0%;     /* #000000 */
-    --primary: 259 100% 59%;           /* #702dff */
-    --primary-foreground: 0 0% 100%;   /* #ffffff */
-    --secondary: 240 100% 98%;         /* #f6f7ff */
-    --secondary-foreground: 0 0% 9.4%; /* #181818 */
-    --muted: 30 50% 98.4%;             /* #fdfaf7 */
-    --muted-foreground: 0 0% 43.5%;    /* #6f6f6f */
-    --accent: 262 100% 91.2%;          /* #e4d2ff */
-    --accent-foreground: 255 28% 51.8%;/* #7863a7 */
-    --destructive: 12 60% 56.1%;       /* #d66247 */
-    --destructive-foreground: 0 0% 100%;/* #ffffff */
-    --border: 246 100% 95.1%;          /* #e8e4ff */
-    --input: 0 0% 95.3%;               /* #f4f2f2 */
-    --ring: 0 0% 0%;                   /* #000000 */
-    --chart-1: 148 61% 71.8%;          /* #8ce1b6 */
-    --chart-2: 249 58% 50%;            /* #5537c9 */
-    --chart-3: 48 100% 75.9%;          /* #ffe783 */
-    --chart-4: 255 36% 54.9%;          /* #7b5bbd */
-    --chart-5: 0 0% 78.8%;             /* #c9c9c9 */
+    --background: 0 0% 100%;      /* #fffefa */
+    --foreground: 0 0% 3.9%;             /* #000000 */
+    --card: 0 0% 100%;             /* #fffefa */
+    --card-foreground: 0 0% 3.9%;        /* #000000 */
+    --popover: 0 0% 100%;          /* #fff8f3 */
+    --popover-foreground: 0 0% 3.9%;     /* #000000 */
+    --primary: 0 0% 9%;           /* #702dff */
+    --primary-foreground: 0 0% 98%;   /* #ffffff */
+    --secondary: 0 0% 96.1%;         /* #f6f7ff */
+    --secondary-foreground: 0 0% 9%; /* #181818 */
+    --muted: 0 0% 96.1%;             /* #fdfaf7 */
+    --muted-foreground: 0 0% 45.1%;    /* #6f6f6f */
+    --accent: 0 0% 96.1%;          /* #e4d2ff */
+    --accent-foreground: 0 0% 9%;/* #7863a7 */
+    --destructive: 0 84.2% 60.2%;       /* #d66247 */
+    --destructive-foreground: 0 0% 98%;/* #ffffff */
+    --border: 0 0% 89.8%;          /* #e8e4ff */
+    --input: 0 0% 89.8%;               /* #f4f2f2 */
+    --ring: 0 0% 3.9%;                   /* #000000 */
+    --chart-1: 12 76% 61%;          /* #8ce1b6 */
+    --chart-2: 173 58% 39%;            /* #5537c9 */
+    --chart-3: 197 37% 24%;          /* #ffe783 */
+    --chart-4: 43 74% 66%;          /* #7b5bbd */
+    --chart-5: 27 87% 67%;             /* #c9c9c9 */
     --sidebar: 230 33% 98.2%;          /* #f6f7fc */
     --sidebar-foreground: 0 0% 0%;     /* #000000 */
     --sidebar-primary: 0 0% 0%;        /* #000000 */
@@ -37,35 +37,35 @@
     --sidebar-accent-foreground: 0 0% 0%; /* #000000 */
     --sidebar-border: 0 0% 95.3%;      /* #f4f2f2 */
     --sidebar-ring: 0 0% 0%;           /* #000000 */
-    --radius: 1.4rem;
+    --radius: 0.5rem;
   }
 
   .dark {
     /* Dark mode colors - matching Trayve dark theme */
-    --background: 271 21% 22%;
-    --foreground: 0 0% 95.5%;
-    --card: 275 22% 26%;
-    --card-foreground: 0 0% 95.5%;
-    --popover: 275 22% 26%;
-    --popover-foreground: 0 0% 95.5%;
-    --primary: 259 100% 65%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 273 25% 29%;
-    --secondary-foreground: 0 0% 95.5%;
-    --muted: 273 25% 29%;
-    --muted-foreground: 0 0% 70.6%;
-    --accent: 262 50% 40%;
-    --accent-foreground: 255 40% 80%;
-    --destructive: 12 70% 65%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 268 21% 33%;
-    --input: 268 21% 33%;
-    --ring: 249 65% 60%;
-    --chart-1: 148 70% 75%;
-    --chart-2: 249 65% 60%;
-    --chart-3: 48 100% 80%;
-    --chart-4: 255 45% 60%;
-    --chart-5: 0 0% 70.6%;
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
     --sidebar: 271 25% 18%;
     --sidebar-foreground: 0 0% 95.5%;
     --sidebar-primary: 249 65% 60%;
@@ -83,5 +83,20 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  
+  .animate-shimmer {
+    animation: shimmer 3s infinite;
   }
 }

@@ -1,7 +1,9 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../config/shopify.server";
 import { getShopifyUserByShop, updateShopifyUserMetadata } from "../lib/auth";
-import { createSubscription, getSubscriptionPlan, getActiveSubscription } from "../lib/services/subscription.service";
+import { createSubscription, getSubscriptionPlan, getActiveSubscription, cancelSubscription } from "../lib/services/subscription.service";
+import { useEffect } from "react";
 
 const PLAN_NAME_TO_TIER = {
   "Creator Plan": "creator",
@@ -22,6 +24,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     // Authenticate using token exchange (recommended for embedded apps)
+    // This will handle session restoration after Shopify redirect
     const { admin, session, redirect: authenticatedRedirect } = await authenticate.admin(request);
     console.log("✅ Authenticated - shop:", session.shop);
 
@@ -67,12 +70,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           return authenticatedRedirect("/app/pricing?error=user_not_found");
         }
 
-        // CRITICAL: Check if subscription already exists to prevent duplicates
-        const existingSubscription = await getActiveSubscription(user.trayve_user_id);
-        
-        if (existingSubscription && existingSubscription.shopify_charge_id === activeSubscription.id) {
+        // CRITICAL: First check if this specific charge already has a subscription
+        // This prevents duplicate creation if callback is called multiple times
+        const { data: existingChargeSubscription } = await (await import('../lib/storage/supabase.server')).supabaseAdmin
+          .from("shopify_user_subscriptions")
+          .select("id, plan_tier, status, shopify_charge_id")
+          .eq("shopify_charge_id", activeSubscription.id)
+          .maybeSingle();
+
+        if (existingChargeSubscription) {
           console.log("⚠️  Subscription already exists for this charge, skipping creation");
-          console.log("   Redirecting to studio with existing subscription");
+          console.log(`   Existing subscription: ${existingChargeSubscription.id}, tier: ${existingChargeSubscription.plan_tier}, status: ${existingChargeSubscription.status}`);
           
           // Clean up pending charge if it exists
           if (chargeId) {
@@ -85,6 +93,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           }
           
           return authenticatedRedirect(`/app/studio?subscribed=true&plan=${encodeURIComponent(planName)}&credits=${plan.images_per_month}`);
+        }
+
+        // Now check if user has any other active subscription (like free tier)
+        const existingSubscription = await getActiveSubscription(user.trayve_user_id);
+        
+        // Handle upgrading from free tier to paid tier
+        // Since tier here is always a paid plan (creator/professional/enterprise),
+        // we just need to check if there's an existing free tier subscription
+        if (existingSubscription && existingSubscription.plan_tier === 'free') {
+          console.log(`🔄 Upgrading from free tier to ${tier}, cancelling free subscription`);
+          await cancelSubscription(existingSubscription.id);
+          console.log("✅ Free tier subscription cancelled");
         }
 
         console.log("🆕 Creating subscription for", session.shop);
@@ -131,9 +151,77 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return authenticatedRedirect("/app/pricing?error=subscription_declined");
   } catch (error) {
-    console.error("Billing callback error:", error);
+    console.error("❌ Billing callback error:", error);
+    console.error("Error details:", JSON.stringify(error, null, 2));
+    
+    // If authentication fails, we need to trigger re-authentication
+    // This can happen if the session token is missing or invalid after Shopify redirect
+    if (error && typeof error === 'object' && 'message' in error) {
+      const errorMessage = (error as Error).message || '';
+      console.error("Error message:", errorMessage);
+      
+      // Check for authentication-related errors
+      if (errorMessage.includes('authenticate') || 
+          errorMessage.includes('session') || 
+          errorMessage.includes('token') ||
+          errorMessage.includes('unauthorized')) {
+        console.log("🔄 Authentication error detected, returning data for client-side re-auth");
+        // Return data to trigger client-side redirect to re-authenticate
+        return { needsReauth: true, chargeId, error: errorMessage };
+      }
+    }
     
     // Use standard redirect for error cases (fallback if authentication fails)
     return redirect("/app/pricing?error=subscription_error");
   }
 };
+
+export default function BillingCallback() {
+  const data = useLoaderData<typeof loader>();
+  
+  useEffect(() => {
+    // If we need re-authentication, redirect to the app which will trigger proper auth flow
+    if (data && typeof data === 'object' && 'needsReauth' in data && data.needsReauth) {
+      console.log("🔄 Re-authentication needed, redirecting to app home");
+      // Store charge_id in sessionStorage to process after re-auth
+      if ('chargeId' in data && data.chargeId) {
+        sessionStorage.setItem('pending_charge_id', data.chargeId as string);
+      }
+      // Redirect to app home which will trigger authentication
+      // Then we can check for pending_charge_id and process it
+      window.top!.location.href = `/app/pricing?processing=true`;
+    }
+  }, [data]);
+  
+  // Show loading state while processing
+  if (data && typeof data === 'object' && 'needsReauth' in data && data.needsReauth) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        flexDirection: 'column',
+        gap: '1rem'
+      }}>
+        <div style={{ 
+          border: '4px solid #f3f3f3',
+          borderTop: '4px solid #3498db',
+          borderRadius: '50%',
+          width: '40px',
+          height: '40px',
+          animation: 'spin 1s linear infinite'
+        }} />
+        <p>Processing your subscription... Please wait.</p>
+        <style>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  return null;
+}

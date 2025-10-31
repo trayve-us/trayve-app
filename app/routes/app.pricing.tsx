@@ -5,11 +5,12 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../config/shopify.server";
 import { getShopifyUserByShop } from "../lib/auth";
 import { getUserCreditBalance } from "../lib/credits";
-import { getActiveSubscription } from "../lib/services/subscription.service";
+import { getActiveSubscription, getSubscriptionHistory } from "../lib/services/subscription.service";
 import { storePendingCharge } from "../lib/shopify";
 import { UserProfile } from "../components/UserProfile";
 import { CreditsDisplay } from "../components/CreditsDisplay";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { AlertDialog } from "../components/ui/alert-dialog";
 
 // Define subscription plans with pricing details
 const SUBSCRIPTION_PLANS = {
@@ -19,7 +20,7 @@ const SUBSCRIPTION_PLANS = {
     price: 29.0,
     images: 30,
     credits: 30000,
-    tier: "starter" as const,
+    tier: "creator" as const,
   },
   professional: {
     name: "Professional Plan",
@@ -50,6 +51,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Check current active subscription from DATABASE
   let currentPlan: string | null = null;
   let dbSubscription = null;
+  let hasCancelledPlanWithCredits = false;
+  let cancelledPlanName = '';
 
   if (user) {
     try {
@@ -60,7 +63,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         currentPlan = dbSubscription.plan_tier;
         console.log(`📊 Found active subscription in DB: ${currentPlan}`);
       } else {
-        console.log('📊 No active subscription in DB - user is on free tier');
+        console.log('📊 No active subscription in DB - checking for cancelled subscriptions');
+        
+        // Check if user has cancelled subscription with remaining credits
+        const subscriptionHistory = await getSubscriptionHistory(user.trayve_user_id);
+        const cancelledSubscription = subscriptionHistory.find(sub => 
+          sub.status === 'cancelled' && 
+          sub.plan_tier !== 'free' // Only check for paid plans
+        );
+        
+        if (cancelledSubscription && balance && balance.available_credits > 0) {
+          hasCancelledPlanWithCredits = true;
+          const planNames: Record<string, string> = {
+            'creator': 'Creator',
+            'professional': 'Professional',
+            'enterprise': 'Enterprise',
+          };
+          cancelledPlanName = planNames[cancelledSubscription.plan_tier] || cancelledSubscription.plan_tier;
+          console.log(`⚠️ User has cancelled ${cancelledPlanName} plan with ${balance.available_credits} credits remaining`);
+        }
       }
     } catch (error) {
       console.error("Error fetching subscription from DB:", error);
@@ -86,6 +107,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       status: dbSubscription.status,
       imagesAllocated: dbSubscription.images_allocated,
     } : null,
+    hasCancelledPlanWithCredits,
+    cancelledPlanName,
   });
 };
 
@@ -216,10 +239,79 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Pricing() {
-  const { user, currentPlan } = useLoaderData<typeof loader>();
+  const { user, currentPlan, credits, hasCancelledPlanWithCredits, cancelledPlanName } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigate = useNavigate();
   const submit = useSubmit();
+
+  // Show toast when user has cancelled plan with remaining credits
+  useEffect(() => {
+    if (hasCancelledPlanWithCredits) {
+      // Create a toast notification
+      const toastDiv = document.createElement('div');
+      toastDiv.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 24px;
+        background: linear-gradient(135deg, #FFF4E5 0%, #FFE8CC 100%);
+        border: 2px solid #FFB84D;
+        border-radius: 12px;
+        padding: 16px 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        z-index: 10000;
+        max-width: 400px;
+        animation: slideIn 0.3s ease-out;
+      `;
+      
+      toastDiv.innerHTML = `
+        <div style="display: flex; align-items: start; gap: 12px;">
+          <div style="font-size: 24px; line-height: 1;">⚠️</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; color: #663C00; margin-bottom: 4px; font-size: 14px;">
+              Use Remaining Credits First
+            </div>
+            <div style="color: #996500; font-size: 13px; line-height: 1.5;">
+              You have ${credits?.available?.toLocaleString() || 0} credits from your cancelled ${cancelledPlanName} plan. Please use them before purchasing a new plan.
+            </div>
+          </div>
+          <button onclick="this.parentElement.parentElement.remove()" style="
+            background: none;
+            border: none;
+            color: #663C00;
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+            padding: 0;
+            opacity: 0.6;
+          ">×</button>
+        </div>
+      `;
+      
+      // Add animation styles
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      document.body.appendChild(toastDiv);
+      
+      // Auto-remove after 8 seconds
+      setTimeout(() => {
+        toastDiv.style.animation = 'slideIn 0.3s ease-out reverse';
+        setTimeout(() => toastDiv.remove(), 300);
+      }, 8000);
+    }
+  }, [hasCancelledPlanWithCredits, cancelledPlanName, credits]);
 
   // Handle confirmation URL redirect using window.open for top-level navigation
   useEffect(() => {
@@ -230,6 +322,13 @@ export default function Pricing() {
   }, [actionData]);
 
   const handleUpgrade = (planKey: PlanKey) => {
+    // Prevent upgrade if user has cancelled plan with remaining credits
+    if (hasCancelledPlanWithCredits) {
+      // Show alert as additional feedback
+      alert(`Please use your remaining ${credits?.available?.toLocaleString() || 0} credits from your ${cancelledPlanName} plan before purchasing a new subscription.`);
+      return;
+    }
+    
     const formData = new FormData();
     formData.append("plan", planKey);
     submit(formData, { method: "post" });
@@ -456,7 +555,7 @@ export default function Pricing() {
               buttonText={currentPlan === "creator" ? "Current Plan" : "Upgrade"}
               isPopular={true}
               isCurrent={currentPlan === "creator"}
-              isDisabled={currentPlan === "creator"}
+              isDisabled={currentPlan === "creator" || hasCancelledPlanWithCredits}
               onUpgrade={() => handleUpgrade("creator")}
             />
 
@@ -478,7 +577,7 @@ export default function Pricing() {
               buttonText={currentPlan === "professional" ? "Current Plan" : "Upgrade"}
               isPopular={false}
               isCurrent={currentPlan === "professional"}
-              isDisabled={currentPlan === "professional"}
+              isDisabled={currentPlan === "professional" || hasCancelledPlanWithCredits}
               onUpgrade={() => handleUpgrade("professional")}
             />
 
@@ -501,7 +600,7 @@ export default function Pricing() {
               buttonText={currentPlan === "enterprise" ? "Current Plan" : "Upgrade"}
               isPopular={false}
               isCurrent={currentPlan === "enterprise"}
-              isDisabled={currentPlan === "enterprise"}
+              isDisabled={currentPlan === "enterprise" || hasCancelledPlanWithCredits}
               onUpgrade={() => handleUpgrade("enterprise")}
             />
           </div>

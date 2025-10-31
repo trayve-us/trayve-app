@@ -6,7 +6,7 @@ import { authenticate } from "../config/shopify.server";
 import { getShopifyUserByShop } from "../lib/auth";
 import { getUserCreditBalance } from "../lib/credits";
 import { type SubscriptionTier } from "../lib/services/model-access.service";
-import { getActiveSubscription } from "../lib/services/subscription.service";
+import { getActiveSubscription, getSubscriptionHistory } from "../lib/services/subscription.service";
 import { useState, useEffect } from "react";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { UserProfile } from "../components/UserProfile";
@@ -15,6 +15,7 @@ import { ModelSelectStep } from "../components/studio/ModelSelectStep";
 import { PoseSelectStep } from "../components/studio/PoseSelectStep";
 import { ConfirmStep } from "../components/studio/ConfirmStep";
 import { Upload, Users, Wand2, Sparkles, ArrowRight, ArrowLeft } from "lucide-react";
+import { TestingPanel } from "../components/TestingPanel";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -37,14 +38,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       } else if (planTier === "enterprise") {
         subscriptionTier = "enterprise";
       } else if (planTier === "creator") {
-        subscriptionTier = "starter"; // Creator plan maps to starter tier
+        subscriptionTier = "creator"; // Creator plan
       } else if (planTier === "free") {
         subscriptionTier = "free";
       }
       
       console.log(`✅ User ${user.trayve_user_id} has active ${planTier} subscription - tier: ${subscriptionTier}`);
     } else {
-      console.log(`ℹ️ User ${user.trayve_user_id} has no active subscription - using free tier`);
+      // Check if user has a cancelled paid subscription with remaining credits
+      const subscriptionHistory = await getSubscriptionHistory(user.trayve_user_id);
+      const cancelledPaidPlan = subscriptionHistory.find(
+        (sub) => sub.status === "cancelled" && sub.plan_tier !== "free"
+      );
+      
+      if (cancelledPaidPlan && balance && balance.available_credits > 0) {
+        // Maintain previous tier access while credits remain
+        const planTier = cancelledPaidPlan.plan_tier;
+        
+        if (planTier === "professional") {
+          subscriptionTier = "professional";
+        } else if (planTier === "enterprise") {
+          subscriptionTier = "enterprise";
+        } else if (planTier === "creator") {
+          subscriptionTier = "creator";
+        }
+        
+        console.log(`✅ User ${user.trayve_user_id} has cancelled ${planTier} plan with ${balance.available_credits} credits remaining - maintaining tier: ${subscriptionTier}`);
+      } else {
+        console.log(`ℹ️ User ${user.trayve_user_id} has no active subscription - using free tier`);
+      }
     }
   }
 
@@ -61,11 +83,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           total: balance.total_credits,
         }
       : { available: 0, total: 0 },
+    testingMode: process.env.TESTING_MODE === "true",
   });
 };
 
 export default function Studio() {
-  const { credits, user } = useLoaderData<typeof loader>();
+  const { credits, user, testingMode } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -188,12 +211,54 @@ export default function Studio() {
       return;
     }
 
+    if (!uploadedFile) {
+      setGenerationError("Please upload a clothing image first");
+      return;
+    }
+
+    if (!selectedModel) {
+      setGenerationError("Please select a model");
+      return;
+    }
+
+    if (selectedPoses.length === 0) {
+      setGenerationError("Please select at least one pose");
+      return;
+    }
+
     setIsGenerating(true);
     setGenerationError(null);
 
     try {
-      // Deduct credits via API
-      const response = await fetch("/api/credits/deduct", {
+      // Step 1: Upload clothing image to Supabase Storage
+      console.log("📤 Uploading clothing image...");
+      
+      const fileName = `${Date.now()}_${uploadedFile.name}`;
+      const uploadFormData = new FormData();
+      uploadFormData.append("file", uploadedFile);
+      uploadFormData.append("bucket", "user-images");
+      uploadFormData.append("path", `clothing/${fileName}`);
+
+      const uploadResponse = await fetch("/api/storage/upload", {
+        method: "POST",
+        body: uploadFormData,
+      });
+
+      const uploadResult = await uploadResponse.json();
+
+      if (!uploadResult.success || !uploadResult.url) {
+        setGenerationError(uploadResult.error || "Failed to upload clothing image");
+        setIsGenerating(false);
+        return;
+      }
+
+      const clothingImageUrl = uploadResult.url;
+      console.log("✅ Clothing image uploaded:", clothingImageUrl);
+
+      // Step 2: Deduct credits via API
+      console.log("💳 Deducting credits...");
+      
+      const creditsResponse = await fetch("/api/credits/deduct", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -205,27 +270,62 @@ export default function Studio() {
         }),
       });
 
-      const result = await response.json();
+      const creditsResult = await creditsResponse.json();
 
-      if (!result.success) {
-        setGenerationError(result.error || "Failed to deduct credits");
+      if (!creditsResult.success) {
+        setGenerationError(creditsResult.error || "Failed to deduct credits");
         setIsGenerating(false);
         return;
       }
 
-      console.log("✅ Credits deducted:", result.creditsConsumed);
-      console.log("✅ Remaining balance:", result.remainingBalance);
+      console.log("✅ Credits deducted:", creditsResult.creditsConsumed);
+      console.log("✅ Remaining balance:", creditsResult.remainingBalance);
 
-      // TODO: Call your actual generation API here
-      // For now, just show success
-      alert(`Generation started! ${result.creditsConsumed} credits deducted. Remaining: ${result.remainingBalance}`);
+      // Step 3: Prepare poses array with URLs from selectedPoseObjects (only selected ones)
+      const posesArray = selectedPoseObjects
+        .filter(pose => selectedPoses.includes(pose.id))
+        .map(pose => ({
+          pose_id: pose.id,
+          image_url: pose.image_url,
+          pose_name: pose.pose_name || pose.name,
+        }));
 
-      // Reload to update credit balance
-      window.location.reload();
+      console.log("📸 Sending poses:", posesArray.length, "poses");
+      console.log("📝 Selected pose IDs:", selectedPoses);
+
+      // Step 4: Execute the pipeline
+      console.log("🚀 Starting pipeline execution...");
+      
+      const pipelineResponse = await fetch("/api/pipeline/execute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          base_model_id: selectedModel,
+          clothing_image_url: clothingImageUrl,
+          poses: posesArray,
+          project_name: `Generation ${new Date().toLocaleString()}`,
+          project_description: `AI try-on with ${selectedPoses.length} pose(s)`,
+        }),
+      });
+
+      const pipelineResult = await pipelineResponse.json();
+
+      if (!pipelineResult.success) {
+        setGenerationError(pipelineResult.error || "Failed to start generation pipeline");
+        setIsGenerating(false);
+        return;
+      }
+
+      console.log("✅ Pipeline started:", pipelineResult);
+      console.log(`✅ Credits deducted: ${creditsResult.creditsConsumed}, Remaining: ${creditsResult.remainingBalance}`);
+
+      // Redirect to generation results page with the project ID
+      navigate(`/app/generation-results/${pipelineResult.project_id}?generating=true`);
     } catch (error: any) {
       console.error("Generation error:", error);
       setGenerationError(error.message || "Failed to start generation");
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -587,6 +687,11 @@ export default function Studio() {
           </div>
         </div>
       </div>
+
+      {/* Testing Panel - Only visible in testing mode */}
+      {testingMode && (
+        <TestingPanel currentCredits={credits.available} />
+      )}
     </Page>
   );
 }

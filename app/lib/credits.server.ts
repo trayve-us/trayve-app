@@ -3,7 +3,7 @@
  * Manages credits for Shopify users (same tables as main Trayve app)
  */
 
-import { supabaseAdmin } from "../storage/supabase.server";
+import { supabaseAdmin } from "./storage/supabase.server";
 
 export interface CreditBalance {
   user_id: string;

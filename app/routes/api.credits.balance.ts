@@ -34,7 +34,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     
     // Get active subscription to determine plan
     const activeSubscription = await getActiveSubscription(shopifyUser.trayve_user_id);
-    const planTier = activeSubscription?.plan_tier || 'free';
     
     // Map plan tier to display name
     const planNames: Record<string, string> = {
@@ -44,6 +43,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       'enterprise': 'Enterprise Plan',
     };
 
+    let planDisplayName = 'Free Plan';
+    let planTier = 'free';
+    
+    if (activeSubscription && activeSubscription.status === 'active') {
+      // User has active subscription
+      planTier = activeSubscription.plan_tier;
+      planDisplayName = planNames[planTier] || 'Free Plan';
+    } else {
+      // Check if user has a cancelled subscription (to show previous plan)
+      const { getSubscriptionHistory } = await import('../lib/services/subscription.service');
+      const subscriptionHistory = await getSubscriptionHistory(shopifyUser.trayve_user_id);
+      
+      // Find the most recent cancelled subscription that's NOT free tier
+      const cancelledSubscription = subscriptionHistory.find(
+        sub => sub.status === 'cancelled' && sub.plan_tier !== 'free'
+      );
+      
+      if (cancelledSubscription && balance && balance.available_credits > 0) {
+        // Only show "Previous (Plan Name)" if they have remaining credits from cancelled plan
+        const previousPlanName = planNames[cancelledSubscription.plan_tier] || 'Plan';
+        planDisplayName = `Previous (${previousPlanName})`;
+        planTier = 'free'; // Current tier is free after cancellation
+      } else {
+        // No cancelled paid plan with credits, show Free Plan
+        planDisplayName = 'Free Plan';
+        planTier = 'free';
+      }
+    }
+
     if (!balance) {
       return json({
         success: true,
@@ -52,7 +80,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         total_credits: 0,
         used_credits: 0,
         available_credits: 0,
-        plan: planNames[planTier] || 'Free Plan',
+        plan: planDisplayName,
         plan_tier: planTier,
         updated_at: new Date().toISOString(),
       });
@@ -65,7 +93,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       total_credits: balance.total_credits,
       used_credits: balance.used_credits,
       available_credits: balance.available_credits,
-      plan: planNames[planTier] || 'Free Plan',
+      plan: planDisplayName,
       plan_tier: planTier,
       updated_at: balance.updated_at,
     });

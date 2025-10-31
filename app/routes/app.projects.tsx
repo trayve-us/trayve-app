@@ -9,6 +9,10 @@ import { getUserCreditBalance } from "../lib/credits";
 import { UserProfile } from "../components/UserProfile";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { Search, Trash2, X } from "lucide-react";
+import { supabaseAdmin } from "~/lib/storage/supabase.server";
+import { ConfirmationDialog } from "../components/ui/confirmation-dialog";
+import { AlertDialog } from "../components/ui/alert-dialog";
+import { TestingPanel } from "../components/TestingPanel";
 
 interface GenerationResult {
   id: string;
@@ -43,21 +47,99 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getShopifyUserByShop(shop);
   const balance = user ? await getUserCreditBalance(user.trayve_user_id) : null;
 
-  // Fetch projects from your backend API
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('📁 FETCHING USER PROJECTS');
+  console.log('═══════════════════════════════════════════════════════');
+
+  // Fetch projects from Supabase
   let projects: Project[] = [];
   if (user) {
     try {
-      const response = await fetch(
-        `${process.env.BACKEND_URL}/api/user-projects?userId=${user.trayve_user_id}&page=1&limit=100`
+      console.log(`👤 User ID: ${user.trayve_user_id}`);
+
+      // Query user_generation_projects - fetch projects first
+      const { data: projectsData, error: projectsError } = await supabaseAdmin
+        .from('user_generation_projects')
+        .select('*')
+        .eq('user_id', user.trayve_user_id)
+        .order('created_at', { ascending: false });
+
+      if (projectsError) {
+        console.error('❌ Error fetching projects:', projectsError);
+        throw projectsError;
+      }
+
+      // For each project, fetch generation_results separately
+      const projectsWithResults = await Promise.all(
+        (projectsData || []).map(async (project: any) => {
+          const { data: results, error: resultsError } = await supabaseAdmin
+            .from('generation_results')
+            .select('id, pose_id, pose_name, result_image_url, generation_metadata, created_at')
+            .eq('project_id', project.id)
+            .order('created_at', { ascending: false });
+
+          if (resultsError) {
+            console.error(`❌ Error fetching results for project ${project.id}:`, resultsError);
+          }
+
+          return {
+            ...project,
+            generation_results: results || []
+          };
+        })
       );
-      if (response.ok) {
-        const data = await response.json();
-        projects = data.success ? data.projects || [] : [];
+
+      const { data, error } = { data: projectsWithResults, error: null };
+
+      if (error) {
+        console.error('❌ Error fetching projects:', error);
+      } else {
+        console.log(`✅ Found ${data?.length || 0} projects`);
+        
+        // Transform data to match expected format
+        projects = (data || []).map((project: any) => {
+          const results = (project.generation_results || []).map((result: any) => {
+            const metadata = result.generation_metadata || {};
+            return {
+              id: result.id,
+              pose_id: result.pose_id,
+              pose_name: result.pose_name || '',
+              result_image_url: result.result_image_url || '',
+              sample_index: 0,
+              created_at: result.created_at,
+              image_url: result.result_image_url,
+              basic_upscale_url: metadata.basic_upscale_url || '',
+              upscaled_image_url: metadata.upscaled_image_url || metadata.face_swap_image_url || '',
+            };
+          });
+
+          return {
+            id: project.id,
+            user_id: project.user_id,
+            title: project.title || 'Untitled Project',
+            description: project.description,
+            clothing_item_name: project.clothing_item_name,
+            clothing_type: project.clothing_type,
+            clothing_image_url: project.clothing_image_url,
+            status: project.status,
+            created_at: project.created_at,
+            updated_at: project.updated_at,
+            result_count: results.length,
+            generation_results: results,
+          };
+        });
+
+        console.log(`📊 Projects summary:`);
+        projects.forEach((project, idx) => {
+          console.log(`  ${idx + 1}. ${project.title} - ${project.result_count} results`);
+        });
       }
     } catch (error) {
-      console.error("Error fetching projects:", error);
+      console.error("❌ Error fetching projects:", error);
     }
   }
+
+  console.log('═══════════════════════════════════════════════════════');
 
   return json({
     shop,
@@ -75,16 +157,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }
       : { available: 0, total: 0 },
     projects,
+    testingMode: process.env.TESTING_MODE === "true",
   });
 };
 
 export default function Projects() {
-  const { user, projects: initialProjects } = useLoaderData<typeof loader>();
+  const { user, projects: initialProjects, credits, testingMode } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  const [alertMessage, setAlertMessage] = useState({ title: "", description: "" });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Debounce search term
   useEffect(() => {
@@ -136,8 +224,8 @@ export default function Projects() {
   // Handle project click
   const handleProjectClick = useCallback(
     (projectId: string) => {
-      // Navigate to studio results (you'll need to create this route)
-      navigate(`/app/studio/results/${projectId}`);
+      // Navigate to generation results page
+      navigate(`/app/generation-results/${projectId}`);
     },
     [navigate]
   );
@@ -145,21 +233,42 @@ export default function Projects() {
   // Handle delete project
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
-    
-    if (!confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
-      return;
-    }
+    setProjectToDelete(projectId);
+    setDeleteDialogOpen(true);
+  };
 
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return;
+
+    setIsDeleting(true);
     try {
-      const response = await fetch(`/api/user-projects/${projectId}`, {
+      const response = await fetch(`/api/projects/${projectToDelete}/delete`, {
         method: "DELETE",
       });
 
       if (response.ok) {
-        setProjects(projects.filter((p) => p.id !== projectId));
+        setProjects(projects.filter((p) => p.id !== projectToDelete));
+        setDeleteDialogOpen(false);
+        setProjectToDelete(null);
+      } else {
+        const data = await response.json();
+        setDeleteDialogOpen(false);
+        setAlertMessage({
+          title: "Delete Failed",
+          description: `Failed to delete project: ${data.error || 'Unknown error'}`,
+        });
+        setAlertDialogOpen(true);
       }
     } catch (error) {
       console.error("Error deleting project:", error);
+      setDeleteDialogOpen(false);
+      setAlertMessage({
+        title: "Delete Failed",
+        description: "Failed to delete project. Please try again.",
+      });
+      setAlertDialogOpen(true);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -345,7 +454,6 @@ export default function Projects() {
                 textAlign: "center",
               }}
             >
-              <div style={{ fontSize: "64px", marginBottom: "16px" }}>🎨</div>
               <h3
                 style={{
                   fontSize: "18px",
@@ -465,7 +573,7 @@ export default function Projects() {
                             <div style={{ fontSize: "48px", marginBottom: "8px" }}>
                               {project.status === "processing" || project.status === "active"
                                 ? "⏳"
-                                : "🎨"}
+                                : ""}
                             </div>
                             <p style={{ fontSize: "12px", fontWeight: "500" }}>
                               {project.status === "processing"
@@ -589,6 +697,33 @@ export default function Projects() {
           opacity: 1 !important;
         }
       `}</style>
+
+      {/* Confirmation Dialog */}
+      <ConfirmationDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDeleteProject}
+        title="Delete Project"
+        description="Are you sure you want to delete this project? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+        isLoading={isDeleting}
+      />
+
+      {/* Alert Dialog */}
+      <AlertDialog
+        open={alertDialogOpen}
+        onOpenChange={setAlertDialogOpen}
+        title={alertMessage.title}
+        description={alertMessage.description}
+        variant="error"
+      />
+
+      {/* Testing Panel - Only visible in testing mode */}
+      {testingMode && (
+        <TestingPanel currentCredits={credits.available} />
+      )}
     </Page>
   );
 }

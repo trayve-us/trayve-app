@@ -8,6 +8,7 @@ import {
 } from "@remix-run/react";
 
 import tailwindCSS from "./styles/tailwind.css?url";
+import { Toaster } from "~/components/ui/toaster";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: tailwindCSS },
@@ -29,6 +30,7 @@ export default function App() {
       </head>
       <body>
         <Outlet />
+        <Toaster />
         <ScrollRestoration />
         <Scripts />
       </body>

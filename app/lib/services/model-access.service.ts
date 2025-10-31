@@ -8,7 +8,7 @@
 // TYPES
 // =============================================
 
-export type SubscriptionTier = "free" | "starter" | "professional" | "enterprise";
+export type SubscriptionTier = "free" | "creator" | "professional" | "enterprise";
 
 export interface ModelAccessInfo {
   isLocked: boolean;
@@ -98,10 +98,10 @@ export function getModelAccessInfo(
   const canAccess = !locked;
   
   // Free tier models are accessible to everyone
-  // Premium models require any paid plan (starter, professional, or enterprise)
+  // Premium models require any paid plan (creator, professional, or enterprise)
   const requiredTier: SubscriptionTier = isFreeTierModel(modelName)
     ? "free"
-    : "starter"; // Any paid plan unlocks all models
+    : "creator"; // Any paid plan unlocks all models
 
   const upgradePrompt = locked
     ? "Upgrade to any plan to unlock all models"
@@ -167,8 +167,8 @@ export function getSubscriptionTier(metadata?: { subscriptionTier?: string }): S
   // Map plan names to tier types
   if (tier === "professional" || tier === "plan_professional") return "professional";
   if (tier === "enterprise" || tier === "plan_enterprise") return "enterprise";
-  if (tier === "creator" || tier === "plan_creator") return "starter"; // Creator plan maps to starter tier
-  if (tier === "starter" || tier === "plan_starter") return "starter";
+  if (tier === "creator" || tier === "plan_creator") return "creator"; // Creator plan
+  if (tier === "starter" || tier === "plan_starter") return "creator"; // Legacy starter maps to creator
   
   return "free";
 }
