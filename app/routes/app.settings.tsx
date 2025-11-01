@@ -1,11 +1,10 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "../config/shopify.server";
 import { getShopifyStore } from "../lib/shopify";
 import { getShopifyUserByShop } from "../lib/auth";
 import { getActiveSubscription } from "../lib/services/subscription.service";
 import { getUserCreditBalance } from "../lib/credits";
-import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -32,30 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function SettingsPage() {
   const { shop, store, user, activeSubscription, creditBalance } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
   const navigate = useNavigate();
-  const [showConfirm, setShowConfirm] = useState(false);
-
-  const handleCancelSubscription = async () => {
-    if (!showConfirm) {
-      setShowConfirm(true);
-      return;
-    }
-
-    fetcher.submit(
-      {},
-      {
-        method: "POST",
-        action: "/api/subscription/cancel",
-      }
-    );
-    
-    setShowConfirm(false);
-  };
-
-  const isLoading = fetcher.state === "submitting" || fetcher.state === "loading";
-  const cancelSuccess = (fetcher.data as any)?.success === true;
-  const cancelError = (fetcher.data as any)?.error;
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
@@ -184,115 +160,6 @@ export default function SettingsPage() {
           ) : (
             <div style={{ marginBottom: '1.5rem' }}>
               <p style={{ color: '#666' }}>No active subscription</p>
-            </div>
-          )}
-
-          {/* Success/Error Messages */}
-          {cancelSuccess && (
-            <div
-              style={{
-                padding: '1rem',
-                backgroundColor: '#d1fae5',
-                border: '1px solid #10b981',
-                borderRadius: '6px',
-                marginBottom: '1rem',
-              }}
-            >
-              <p style={{ color: '#065f46', fontWeight: '500' }}>
-                ✓ Subscription cancelled successfully
-              </p>
-              {(fetcher.data as any)?.creditsDeducted > 0 && (
-                <p style={{ color: '#065f46', fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                  {(fetcher.data as any)?.creditsDeducted} credits deducted
-                </p>
-              )}
-            </div>
-          )}
-
-          {cancelError && (
-            <div
-              style={{
-                padding: '1rem',
-                backgroundColor: '#fee2e2',
-                border: '1px solid #ef4444',
-                borderRadius: '6px',
-                marginBottom: '1rem',
-              }}
-            >
-              <p style={{ color: '#991b1b', fontWeight: '500' }}>
-                ✗ Error: {cancelError}
-              </p>
-            </div>
-          )}
-
-          {/* Cancel Subscription Button (Testing Only) */}
-          {activeSubscription && activeSubscription.status === 'active' && (
-            <div>
-              <p style={{ fontSize: '0.875rem', color: '#dc2626', fontWeight: '600', marginBottom: '0.5rem' }}>
-                🧪 Testing Only
-              </p>
-              
-              {!showConfirm ? (
-                <button
-                  onClick={handleCancelSubscription}
-                  disabled={isLoading}
-                  style={{
-                    padding: '0.75rem 1.5rem',
-                    backgroundColor: '#dc2626',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontSize: '0.9rem',
-                    fontWeight: '500',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    opacity: isLoading ? 0.6 : 1,
-                  }}
-                >
-                  {isLoading ? 'Cancelling...' : 'Cancel Subscription (Test)'}
-                </button>
-              ) : (
-                <div>
-                  <p style={{ fontSize: '0.875rem', color: '#666', marginBottom: '1rem' }}>
-                    Are you sure? This will cancel your subscription and deduct{' '}
-                    <strong>{activeSubscription.images_allocated} credits</strong> from your balance.
-                  </p>
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button
-                      onClick={handleCancelSubscription}
-                      disabled={isLoading}
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        backgroundColor: '#dc2626',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                        opacity: isLoading ? 0.6 : 1,
-                      }}
-                    >
-                      {isLoading ? 'Cancelling...' : 'Yes, Cancel'}
-                    </button>
-                    <button
-                      onClick={() => setShowConfirm(false)}
-                      disabled={isLoading}
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        backgroundColor: '#e5e7eb',
-                        color: '#374151',
-                        border: 'none',
-                        borderRadius: '6px',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      No, Keep It
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>

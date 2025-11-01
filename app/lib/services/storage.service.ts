@@ -13,6 +13,7 @@ export const STORAGE_BUCKETS = {
   MODELS: 'models',
   USER_IMAGES: 'user-images',
   BRAND_ASSETS: 'brand-assets',
+  SHOPIFY_GENERATIONS: 'shopify-generations', // New bucket with 50MB limit for Shopify app
 } as const;
 
 // =============================================
@@ -115,21 +116,17 @@ export async function uploadToModelsBucket(
  * Upload image to user-images bucket
  * @param imageBuffer - Image buffer
  * @param fileName - File name
- * @param userId - User ID for organizing files
- * @param contentType - MIME type (default: image/jpeg)
+ * @param contentType - MIME type (default: image/png)
  * @returns Upload result with URL and path
  */
 export async function uploadToUserImagesBucket(
   imageBuffer: Buffer,
   fileName: string,
-  userId: string,
-  contentType: string = "image/jpeg"
+  contentType: string = "image/png"
 ): Promise<UploadResult> {
-  const filePath = `${userId}/images/${fileName}`;
-
   const { data, error } = await supabaseAdmin.storage
     .from(STORAGE_BUCKETS.USER_IMAGES)
-    .upload(filePath, imageBuffer, {
+    .upload(fileName, imageBuffer, {
       contentType,
       cacheControl: "3600",
       upsert: false,
@@ -141,6 +138,39 @@ export async function uploadToUserImagesBucket(
   }
 
   const publicUrl = getUserImagesPublicUrl(data.path);
+
+  return {
+    url: publicUrl,
+    path: data.path,
+  };
+}
+
+/**
+ * Upload image to shopify-generations bucket (50MB limit)
+ * @param imageBuffer - Image buffer
+ * @param fileName - File name
+ * @param contentType - MIME type (default: image/png)
+ * @returns Upload result with URL and path
+ */
+export async function uploadToShopifyGenerationsBucket(
+  imageBuffer: Buffer,
+  fileName: string,
+  contentType: string = "image/png"
+): Promise<UploadResult> {
+  const { data, error } = await supabaseAdmin.storage
+    .from(STORAGE_BUCKETS.SHOPIFY_GENERATIONS)
+    .upload(fileName, imageBuffer, {
+      contentType,
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (error) {
+    console.error("Upload error to shopify-generations bucket:", error);
+    throw new Error(`Failed to upload to shopify-generations bucket: ${error.message}`);
+  }
+
+  const publicUrl = getPublicUrl(data.path, STORAGE_BUCKETS.SHOPIFY_GENERATIONS);
 
   return {
     url: publicUrl,

@@ -23,7 +23,7 @@ import {
   type PipelineStepResult,
 } from "./ai-providers.service";
 import {
-  uploadToUserImagesBucket,
+  uploadToShopifyGenerationsBucket,
   getPublicUrl,
   type UploadResult,
 } from "./storage.service";
@@ -136,12 +136,12 @@ export async function startPipelineExecution(
       .from("user_generation_projects")
       .insert({
         user_id,
-        name: project_name || `Generation ${new Date().toLocaleDateString()}`,
+        name: project_name || 'Untitled project',
         description: project_description || "AI-generated fashion images",
         base_model_id,
         clothing_image_url,
         result_count: 0, // Will be updated as generations complete
-        status: 'active', // active = in progress, archived = completed
+        status: 'active', // active = in progress, archived = completed,
       })
       .select()
       .single();
@@ -187,7 +187,7 @@ export async function startPipelineExecution(
           clothing_image_url,
         },
         metadata: {
-          project_name: project_name || `Generation ${new Date().toLocaleDateString()}`,
+          project_name: project_name || 'Untitled project',
         },
         credits_reserved: 1000 * poses.length,
         started_at: new Date().toISOString(),
@@ -394,14 +394,17 @@ async function processAllPoses(
   console.log(`✅ Fetched ${generationResults.length} generation result records`);
   console.log('───────────────────────────────────────────────────────');
 
-  // Process each pose sequentially
-  for (let i = 0; i < poses.length; i++) {
-    const pose = poses[i];
+  // Process all poses in parallel for faster execution
+  console.log('🚀 Starting PARALLEL processing of all poses...');
+  console.log(`   Total poses to process: ${poses.length}`);
+  console.log('───────────────────────────────────────────────────────');
+  
+  const processPose = async (pose: PoseInput, index: number) => {
     const generationResult = generationResults.find((r) => r.pose_id === pose.pose_id);
 
     console.log('');
     console.log('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
-    console.log(`┃  PROCESSING POSE ${i + 1}/${poses.length}                              ┃`);
+    console.log(`┃  PROCESSING POSE ${index + 1}/${poses.length}                              ┃`);
     console.log('┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛');
     console.log(`📸 Pose ID: ${pose.pose_id}`);
     console.log(`📝 Pose Name: ${pose.pose_name || 'Unnamed'}`);
@@ -410,8 +413,7 @@ async function processAllPoses(
     if (!generationResult) {
       console.error(`❌ Generation result not found for pose ${pose.pose_id}`);
       console.error('   Skipping this pose...');
-      failedCount++;
-      continue;
+      return { success: false, index };
     }
 
     console.log(`🆔 Result Record ID: ${generationResult.id}`);
@@ -440,22 +442,31 @@ async function processAllPoses(
       console.log(`✅ Pipeline completed in ${poseProcessingTime}s`);
       console.log(`📊 Steps executed: ${pipelineResults.length}`);
       
-      pipelineResults.forEach((step: any, index: number) => {
+      pipelineResults.forEach((step: any, stepIndex: number) => {
         const statusEmoji = step.status === 'completed' ? '✅' : step.status === 'failed' ? '❌' : '⏭️';
-        console.log(`   ${statusEmoji} ${index + 1}. ${step.stepType} (${step.status})`);
+        console.log(`   ${statusEmoji} ${stepIndex + 1}. ${step.stepType} (${step.status})`);
         if (step.processingTime) {
           console.log(`      Time: ${(step.processingTime / 1000).toFixed(2)}s`);
         }
       });
       console.log('───────────────────────────────────────────────────────');
 
-      // Check if pipeline completed successfully
-      const failedStep = pipelineResults.find((r) => r.status === 'failed');
-      if (failedStep) {
-        console.error(`❌ Pipeline failed at step: ${failedStep.stepType}`);
-        console.error(`   Error: ${failedStep.error}`);
-        throw new Error(failedStep.error || "Pipeline execution failed");
+      // Check if CRITICAL steps failed (try-on is critical, upscales are optional)
+      const failedTryOn = pipelineResults.find((r) => r.stepType === 'tryon' && r.status === 'failed');
+      if (failedTryOn) {
+        console.error(`❌ Critical step failed: ${failedTryOn.stepType}`);
+        console.error(`   Error: ${failedTryOn.error}`);
+        throw new Error(failedTryOn.error || "Try-on generation failed");
       }
+
+      // Log warnings for optional step failures but don't fail the entire pipeline
+      const failedOptionalSteps = pipelineResults.filter((r) => 
+        r.status === 'failed' && r.stepType !== 'tryon'
+      );
+      failedOptionalSteps.forEach(step => {
+        console.warn(`⚠️  Optional step failed but continuing: ${step.stepType}`);
+        console.warn(`   Reason: ${step.error}`);
+      });
 
       // Get the final image URL (last completed step)
       const completedSteps = pipelineResults.filter((r) => r.status === 'completed');
@@ -477,7 +488,8 @@ async function processAllPoses(
       }
 
       const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-      console.log(`✅ Downloaded image: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
+      const imageSizeMB = (imageBuffer.length / 1024 / 1024).toFixed(2);
+      console.log(`✅ Downloaded image: ${imageSizeMB} MB`);
       console.log('───────────────────────────────────────────────────────');
 
       // Upload to Supabase storage
@@ -485,52 +497,150 @@ async function processAllPoses(
       const timestamp = Date.now();
       const filename = `generation_${execution_id}_pose_${pose.pose_id}_${timestamp}.png`;
       console.log(`   Filename: ${filename}`);
+      console.log(`   Size: ${imageSizeMB} MB`);
       
-      const uploadResult: UploadResult = await uploadToUserImagesBucket(imageBuffer, filename, "image/png");
-      const finalImageUrl = getPublicUrl(uploadResult.path, "users-generations");
+      const uploadResult: UploadResult = await uploadToShopifyGenerationsBucket(imageBuffer, filename, "image/png");
+      const finalImageUrl = getPublicUrl(uploadResult.path, "shopify-generations");
       
       console.log(`✅ Upload successful`);
       console.log(`   Storage Path: ${uploadResult.path}`);
       console.log(`   Public URL: ${finalImageUrl.substring(0, 80)}...`);
       console.log('───────────────────────────────────────────────────────');
 
-      // Build step results metadata
-      const stepResultsMap: Record<string, string> = {};
+      // Build step results metadata with URLs AND statuses
+      const metadata: any = {
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      };
+
       pipelineResults.forEach((step) => {
-        if (step.imageUrl) {
-          stepResultsMap[step.stepType] = step.imageUrl;
+        // Set status fields based on step type
+        if (step.stepType === 'basic-upscale') {
+          metadata.basic_upscale_status = step.status;
+          if (step.status === 'completed' && step.imageUrl) {
+            metadata.basic_upscale_url = step.imageUrl;
+          } else if (step.status === 'failed') {
+            metadata.basic_upscale_error = step.error || 'Unknown error';
+          }
+        } else if (step.stepType === 'enhanced-upscale') {
+          metadata.upscale_status = step.status;
+          if (step.status === 'completed' && step.imageUrl) {
+            metadata.upscaled_image_url = step.imageUrl;
+          } else if (step.status === 'failed') {
+            metadata.upscale_error = step.error || 'Unknown error';
+          }
+        } else if (step.stepType === 'replicate-face-swap') {
+          metadata.face_swap_status = step.status;
+          if (step.status === 'completed' && step.imageUrl) {
+            metadata.face_swap_image_url = step.imageUrl;
+          } else if (step.status === 'failed') {
+            metadata.face_swap_error = step.error || 'Unknown error';
+          }
+        } else if (step.stepType === 'tryon') {
+          metadata.tryon_status = step.status;
+          if (step.status === 'completed' && step.imageUrl) {
+            metadata.tryon_url = step.imageUrl;
+          } else if (step.status === 'failed') {
+            metadata.tryon_error = step.error || 'Unknown error';
+          }
         }
       });
 
       // Update generation result with all step results
       console.log('💾 Updating database with results...');
-      const { error: updateError } = await supabaseAdmin
-        .from("generation_results")
-        .update({
-          result_image_url: finalImageUrl,
-          supabase_path: uploadResult.path,
-          generation_metadata: {
-            status: 'completed',
-            step_results: stepResultsMap,
-            completed_at: new Date().toISOString(),
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", generationResult.id);
+      console.log(`   Result ID: ${generationResult.id}`);
+      console.log(`   Final Image URL: ${finalImageUrl.substring(0, 80)}...`);
+      console.log(`   Metadata Status Fields:`);
+      console.log(`     - upscale_status: ${metadata.upscale_status || 'N/A'}`);
+      console.log(`     - face_swap_status: ${metadata.face_swap_status || 'N/A'}`);
+      console.log(`   Metadata size: ${JSON.stringify(metadata).length} bytes`);
+      
+      // Retry logic for database timeout issues
+      let updateAttempt = 0;
+      const maxRetries = 3;
+      let updateError: any = null;
+      
+      while (updateAttempt < maxRetries) {
+        updateAttempt++;
+        console.log(`   Attempt ${updateAttempt}/${maxRetries}...`);
+        
+        const { error } = await supabaseAdmin
+          .from("generation_results")
+          .update({
+            result_image_url: finalImageUrl,
+            supabase_path: uploadResult.path,
+            generation_metadata: metadata,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", generationResult.id);
+        
+        if (!error) {
+          updateError = null;
+          break;
+        }
+        
+        updateError = error;
+        
+        if (error.code === '57014') {
+          // Statement timeout - wait and retry
+          console.warn(`   ⚠️  Database timeout on attempt ${updateAttempt}, retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * updateAttempt));
+        } else {
+          // Other error - don't retry
+          break;
+        }
+      }
 
       if (updateError) {
-        console.error(`❌ Error updating generation result ${generationResult.id}:`, updateError);
+        console.error(`❌ Error updating generation result ${generationResult.id} after ${updateAttempt} attempts:`, updateError);
         throw updateError;
       }
 
-      completedCount++;
       console.log(`✅ Database updated successfully`);
+      
+      // Print real-time results summary
+      console.log('');
+      console.log('📸 Results Summary:');
+      console.log(`  Pose ${index + 1}: ${pose.pose_name || 'Generated Pose ' + pose.pose_id}`);
+      console.log(`    Images: 1`);
+      console.log(`    Image 1:`);
+      
+      const isProfessionalOrEnterprise = ['professional', 'enterprise'].includes(subscription_tier.toLowerCase());
+      
+      // Try-On (Base) - Required for all tiers
+      const tryOnStep = pipelineResults.find(r => r.stepType === 'tryon');
+      const baseStatus = tryOnStep?.status === 'completed' ? '✅' : 
+                        tryOnStep?.status === 'failed' ? '❌' : 'pending';
+      console.log(`      - Base (Try-On): ${baseStatus}`);
+      
+      if (isProfessionalOrEnterprise) {
+        // Professional/Enterprise: Show 4K Upscale and Face Swap
+        const enhancedUpscaleStep = pipelineResults.find(r => r.stepType === 'enhanced-upscale');
+        const upscale4KStatus = enhancedUpscaleStep?.status === 'completed' ? '✅' : 
+                                enhancedUpscaleStep?.status === 'failed' ? '❌' : 'pending';
+        console.log(`      - 4K Upscale: ${upscale4KStatus}`);
+        
+        const faceSwapStep = pipelineResults.find(r => r.stepType === 'replicate-face-swap');
+        const faceSwapStatus = faceSwapStep?.status === 'completed' ? '✅' : 
+                              faceSwapStep?.status === 'failed' ? '❌' : 'pending';
+        console.log(`      - Face Swap: ${faceSwapStatus}`);
+      } else {
+        // Free/Starter/Creator: Show 2K Upscale only
+        const basicUpscaleStep = pipelineResults.find(r => r.stepType === 'basic-upscale');
+        const upscale2KStatus = basicUpscaleStep?.status === 'completed' ? '✅' : 
+                                basicUpscaleStep?.status === 'failed' ? '❌' : 'pending';
+        console.log(`      - 2K Upscale: ${upscale2KStatus}`);
+      }
+      console.log('');
+      
       console.log('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
-      console.log(`┃  ✅ POSE ${i + 1}/${poses.length} COMPLETED SUCCESSFULLY           ┃`);
+      console.log(`┃  ✅ POSE ${index + 1}/${poses.length} COMPLETED SUCCESSFULLY           ┃`);
       console.log('┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛');
+      
+      return { success: true, index };
     } catch (error: any) {
       console.error('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
-      console.error(`┃  ❌ POSE ${i + 1}/${poses.length} FAILED                             ┃`);
+      console.error(`┃  ❌ POSE ${index + 1}/${poses.length} FAILED                             ┃`);
       console.error('┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛');
       console.error(`Error Message: ${error.message}`);
       console.error('Error Details:', error);
@@ -548,13 +658,27 @@ async function processAllPoses(
         })
         .eq("id", generationResult.id);
 
+      return { success: false, index };
+    }
+  };
+
+  // Execute all poses in parallel using Promise.allSettled to handle individual failures
+  const results = await Promise.allSettled(
+    poses.map((pose, index) => processPose(pose, index))
+  );
+
+  // Count completed and failed poses
+  results.forEach((result) => {
+    if (result.status === 'fulfilled' && result.value.success) {
+      completedCount++;
+    } else {
       failedCount++;
     }
+  });
 
-    // Update execution progress after each pose
-    await updateExecutionProgress(execution_id, completedCount, failedCount);
-    console.log(`📊 Progress: ${completedCount} completed, ${failedCount} failed`);
-  }
+  // Update execution progress after all poses complete
+  await updateExecutionProgress(execution_id, completedCount, failedCount, poses.length);
+  console.log(`📊 Final Progress: ${completedCount} completed, ${failedCount} failed`);
 
   // Final status update
   console.log('');
@@ -609,12 +733,17 @@ async function processAllPoses(
 async function updateExecutionProgress(
   execution_id: string,
   completed: number,
-  failed: number
+  failed: number,
+  total: number
 ): Promise<void> {
+  // Calculate actual progress: (completed + failed) / total poses
+  const processedPoses = completed + failed;
+  const progress = total > 0 ? Math.round((processedPoses / total) * 100) : 0;
+  
   await supabaseAdmin
     .from("pipeline_executions")
     .update({
-      progress: Math.round(((completed + failed) / (completed + failed)) * 100),
+      progress: progress,
       updated_at: new Date().toISOString(),
     })
     .eq("id", execution_id);

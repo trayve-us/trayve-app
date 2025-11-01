@@ -86,9 +86,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // Transform results to match expected format
     // Each generation_result represents one pose with one image
     // The metadata contains processing status for different enhancement steps
-    const formattedResults = (results || []).map((result: any) => {
+    const formattedResults = results.map((result: any) => {
       const metadata = result.generation_metadata || {};
       const tier = result.generation_tier || 'free';
+      
+      // Debug: Log what's in the database
+      console.log(`🔍 Debug Result ${result.id}:`);
+      console.log(`   - result_image_url: ${result.result_image_url ? 'EXISTS' : 'NULL'}`);
+      console.log(`   - metadata.basic_upscale_url: ${metadata.basic_upscale_url ? 'EXISTS' : 'NULL'}`);
+      console.log(`   - metadata.basic_upscale_status: ${metadata.basic_upscale_status || 'NULL'}`);
+      console.log(`   - metadata.status: ${metadata.status || 'NULL'}`);
       
       // Define which features are available for each tier
       const tierFeatures = {

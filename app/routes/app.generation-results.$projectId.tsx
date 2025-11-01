@@ -1,28 +1,13 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from '@remix-run/react';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '~/components/ui/card';
-import { Button } from '~/components/ui/button';
-import { Badge } from '~/components/ui/badge';
-import { Alert, AlertDescription } from '~/components/ui/alert';
-import { Progress } from '~/components/ui/progress';
-import { Skeleton } from '~/components/ui/skeleton';
 import { 
-  Loader2, 
-  Download, 
-  AlertCircle, 
-  Info, 
-  Sparkles, 
-  ArrowLeft,
-  Scissors,
-  Image as ImageIcon,
-  ZoomIn,
-  ChevronLeft,
-  ChevronRight,
-  X
-} from 'lucide-react';
-import { useToast } from '~/hooks/use-toast';
-import { CreditsDisplay } from '~/components/CreditsDisplay';
-import { UserProfile } from '~/components/UserProfile';
+  BackButton,
+  ResultCard,
+  LoadingSkeleton,
+  ImageModal,
+  EditProjectNameModal
+} from '~/components/results';
+import JSZip from 'jszip';
 
 // ================================================================================
 // TYPE DEFINITIONS
@@ -32,11 +17,11 @@ interface GenerationImage {
   id: string;
   image_url: string;
   basic_upscale_url?: string;
-  basic_upscale_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  basic_upscale_status?: 'pending' | 'processing' | 'completed' | 'failed' | 'not_available';
   upscaled_image_url?: string;
-  upscale_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  upscale_status?: 'pending' | 'processing' | 'completed' | 'failed' | 'not_available';
   face_swap_image_url?: string;
-  face_swap_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  face_swap_status?: 'pending' | 'processing' | 'completed' | 'failed' | 'not_available';
   generation_record?: {
     removed_bg_url?: string;
   };
@@ -49,726 +34,191 @@ interface GenerationResult {
   images: GenerationImage[];
 }
 
-interface PipelineExecution {
+interface ProjectData {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  progress: number;
-  error_message?: string;
+  name: string;
+  created_at: string;
+  clothing_image_url?: string;
 }
 
 interface UserSubscription {
   tier: 'free' | 'creator' | 'professional' | 'enterprise';
-  credits_balance: number;
-}
-
-// ================================================================================
-// CUSTOM HOOK: Multi-Execution Status Polling
-// ================================================================================
-
-function useMultiExecutionStatus(
-  executionIds: string[],
-  enabled: boolean,
-  onStatusChange: (data: { executions: PipelineExecution[], allCompleted: boolean, hasFailures: boolean }) => void
-) {
-  const [isPolling, setIsPolling] = useState(false);
-  const pollCountRef = useRef(0);
-  const maxPolls = 300; // 15 minutes at 5 second intervals
-
-  useEffect(() => {
-    if (!enabled || executionIds.length === 0) {
-      setIsPolling(false);
-      return;
-    }
-
-    setIsPolling(true);
-    pollCountRef.current = 0;
-
-    const pollInterval = setInterval(async () => {
-      pollCountRef.current++;
-
-      if (pollCountRef.current >= maxPolls) {
-        console.warn('⏱️ Maximum polling duration reached (15 minutes)');
-        clearInterval(pollInterval);
-        setIsPolling(false);
-        return;
-      }
-
-      try {
-        const responses = await Promise.all(
-          executionIds.map(id =>
-            fetch(`/api/pipeline/status?executionId=${id}`).then(res => res.json())
-          )
-        );
-
-        const executions: PipelineExecution[] = responses.map(r => r.execution);
-        const allCompleted = executions.every(e => e.status === 'completed');
-        const hasFailures = executions.some(e => e.status === 'failed');
-
-        onStatusChange({ executions, allCompleted, hasFailures });
-
-        if (allCompleted || hasFailures) {
-          clearInterval(pollInterval);
-          setIsPolling(false);
-        }
-      } catch (error) {
-        console.error('❌ Polling error:', error);
-      }
-    }, 5000); // Poll every 5 seconds
-
-    return () => {
-      clearInterval(pollInterval);
-      setIsPolling(false);
-    };
-  }, [executionIds, enabled]);
-
-  return { isPolling };
-}
-
-// ================================================================================
-// UTILITY FUNCTIONS
-// ================================================================================
-
-function hasEnhancedFeatures(tier: string): boolean {
-  return tier === 'professional' || tier === 'enterprise';
-}
-
-function getFinalResultUrl(image: GenerationImage, hasEnhanced: boolean): string {
-  if (hasEnhanced) {
-    // Professional/Enterprise: Priority to face-swapped 4K
-    return image.face_swap_image_url || 
-           image.upscaled_image_url || 
-           image.basic_upscale_url || 
-           image.image_url;
-  } else {
-    // Free/Creator: Use basic upscale or original
-    return image.basic_upscale_url || image.image_url;
-  }
-}
-
-function ensureWatermarkedUrl(url: string, imageId: string): string {
-  if (!url) return url;
-  
-  // If already watermarked, return as is
-  if (url.includes('/watermarked/')) {
-    return url;
-  }
-  
-  // Convert to watermarked path
-  const urlParts = url.split('/');
-  const filename = urlParts[urlParts.length - 1];
-  urlParts[urlParts.length - 1] = 'watermarked';
-  urlParts.push(filename);
-  
-  return urlParts.join('/');
-}
-
-function determineProcessingStage(image: GenerationImage): string {
-  if (image.face_swap_status === 'processing') {
-    return 'Face enhancement...';
-  }
-  if (image.upscale_status === 'processing') {
-    return 'Enhancing to 4K...';
-  }
-  if (image.basic_upscale_status === 'processing') {
-    return 'Upscaling image...';
-  }
-  return 'Processing...';
-}
-
-function getTimeBasedMessage(elapsedSeconds: number): string {
-  if (elapsedSeconds < 30) {
-    return 'Generating images... This typically takes 30-60 seconds';
-  } else if (elapsedSeconds < 60) {
-    return 'Almost done... Processing final touches';
-  } else {
-    return 'Taking longer than expected... Still processing';
-  }
-}
-
-// ================================================================================
-// PROCESSING OVERLAY COMPONENT
-// ================================================================================
-
-function ProcessingOverlay({ 
-  stage, 
-  progress 
-}: { 
-  stage: string; 
-  progress?: number;
-}) {
-  return (
-    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm z-10">
-      <div className="flex flex-col items-center justify-center h-full">
-        {/* Animated Spinner */}
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-white/30 border-t-white" />
-        
-        {/* Stage Text */}
-        <p className="text-white font-medium mt-4">
-          {stage}
-        </p>
-        
-        {/* Progress Bar */}
-        {progress !== undefined && progress > 0 && (
-          <div className="w-48 h-2 bg-white/20 rounded-full mt-3 overflow-hidden">
-            <div 
-              className="h-full bg-white rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        )}
-        
-        {/* Quality Badge */}
-        <div className="mt-4 px-3 py-1 bg-violet-500/90 rounded-full">
-          <span className="text-xs text-white font-medium">
-            Processing 4K
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ================================================================================
-// PLACEHOLDER CARD COMPONENT
-// ================================================================================
-
-function PlaceholderCard({ progress }: { progress?: number }) {
-  return (
-    <Card className="overflow-hidden">
-      <div className="relative aspect-square">
-        {/* Animated Gradient Background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-violet-500/20 via-pink-500/20 to-orange-500/20 animate-pulse">
-          {/* Shimmer Effect */}
-          <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" 
-               style={{ animation: 'shimmer 3s infinite' }} />
-        </div>
-        
-        {/* Processing Icon */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center space-y-3">
-            <Sparkles className="w-12 h-12 text-violet-400 animate-pulse mx-auto" />
-            <p className="text-sm text-muted-foreground">
-              Generating image...
-            </p>
-            {progress !== undefined && progress > 0 && (
-              <div className="w-32 h-1 bg-white/10 rounded-full mx-auto overflow-hidden">
-                <div 
-                  className="h-full bg-violet-400 rounded-full transition-all duration-500"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      
-      <CardContent className="p-4">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-3 w-1/2" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ================================================================================
-// IMAGE CARD COMPONENT
-// ================================================================================
-
-function ImageCard({
-  image,
-  sampleIndex,
-  userTier,
-  onImageClick,
-  onDownload,
-  onRemoveBackground,
-  isRemovingBg
-}: {
-  image: GenerationImage;
-  sampleIndex: number;
-  userTier: string;
-  onImageClick: () => void;
-  onDownload: () => void;
-  onRemoveBackground: () => void;
-  isRemovingBg: boolean;
-}) {
-  const isProfessional = hasEnhancedFeatures(userTier);
-  const isFreeTier = userTier === 'free';
-  const hasBgRemoved = !!image.generation_record?.removed_bg_url;
-
-  // Determine display URL and processing state
-  const showProcessingOverlay = useMemo(() => {
-    return isProfessional &&
-           image.basic_upscale_status === 'completed' &&
-           image.basic_upscale_url &&
-           (image.face_swap_status !== 'completed' || image.upscale_status !== 'completed');
-  }, [isProfessional, image]);
-
-  const displayUrl = useMemo(() => {
-    let url: string;
-    
-    if (showProcessingOverlay) {
-      // Show 2K while processing 4K
-      url = image.basic_upscale_url!;
-    } else {
-      url = getFinalResultUrl(image, isProfessional);
-    }
-
-    // Ensure watermarked for free tier
-    if (isFreeTier) {
-      url = ensureWatermarkedUrl(url, image.id);
-      if (!url.includes('/watermarked/')) {
-        return ''; // Security block
-      }
-    }
-
-    return url;
-  }, [image, isProfessional, isFreeTier, showProcessingOverlay]);
-
-  const processingStage = useMemo(() => {
-    return determineProcessingStage(image);
-  }, [image]);
-
-  if (!displayUrl) {
-    return <PlaceholderCard />;
-  }
-
-  return (
-    <Card className="overflow-hidden group">
-      <div className="relative aspect-square bg-muted cursor-pointer" onClick={onImageClick}>
-        <img 
-          src={displayUrl}
-          alt={`Generated sample ${sampleIndex + 1}`}
-          className="w-full h-full object-cover"
-          loading="lazy"
-        />
-        
-        {/* Processing Overlay */}
-        {showProcessingOverlay && (
-          <ProcessingOverlay stage={processingStage} />
-        )}
-
-        {/* Quality Badge */}
-        <div className="absolute top-2 right-2 flex flex-col gap-1">
-          {showProcessingOverlay ? (
-            <Badge variant="secondary" className="bg-violet-500/10 text-violet-700 border-violet-500/20">
-              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-              Processing 4K
-            </Badge>
-          ) : isProfessional && image.face_swap_image_url ? (
-            <Badge variant="default" className="bg-gradient-to-r from-violet-500 to-pink-500">
-              4K Enhanced
-            </Badge>
-          ) : !isFreeTier && image.basic_upscale_url ? (
-            <Badge variant="default" className="bg-blue-500">
-              2K Quality
-            </Badge>
-          ) : isFreeTier ? (
-            <Badge variant="outline" className="border-orange-500 text-orange-700 bg-white/90">
-              Watermarked
-            </Badge>
-          ) : null}
-          
-          {hasBgRemoved && (
-            <Badge variant="default" className="bg-green-500">
-              <Scissors className="w-3 h-3 mr-1" />
-              BG Removed
-            </Badge>
-          )}
-        </div>
-
-        {/* Zoom Indicator */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
-          <ZoomIn className="w-8 h-8 text-white" />
-        </div>
-      </div>
-
-      <CardFooter className="flex flex-col gap-2 p-4">
-        <Button 
-          onClick={onDownload}
-          className="w-full"
-          variant="default"
-        >
-          <Download className="w-4 h-4 mr-2" />
-          {isProfessional && image.face_swap_image_url ? 'Download Both (2K + 4K)' : 
-           showProcessingOverlay ? 'Download 2K (4K processing...)' :
-           'Download'}
-        </Button>
-
-        {!isFreeTier && !hasBgRemoved && (
-          <Button
-            onClick={onRemoveBackground}
-            variant="outline"
-            className="w-full"
-            disabled={isRemovingBg || showProcessingOverlay}
-          >
-            {isRemovingBg ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Removing...
-              </>
-            ) : (
-              <>
-                <Scissors className="w-4 h-4 mr-2" />
-                Remove Background (500 credits)
-              </>
-            )}
-          </Button>
-        )}
-
-        {hasBgRemoved && (
-          <Button
-            onClick={onDownload}
-            variant="outline"
-            className="w-full"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Download with BG Removed
-          </Button>
-        )}
-      </CardFooter>
-    </Card>
-  );
-}
-
-// ================================================================================
-// IMAGE MODAL COMPONENT
-// ================================================================================
-
-function ImageModal({
-  image,
-  sampleIndex,
-  userTier,
-  onClose,
-  onPrevious,
-  onNext,
-  hasNext,
-  hasPrevious
-}: {
-  image: GenerationImage;
-  sampleIndex: number;
-  userTier: string;
-  onClose: () => void;
-  onPrevious: () => void;
-  onNext: () => void;
-  hasNext: boolean;
-  hasPrevious: boolean;
-}) {
-  const isProfessional = hasEnhancedFeatures(userTier);
-  const showDualView = isProfessional && 
-                       image.basic_upscale_status === 'completed' &&
-                       image.face_swap_status !== 'completed';
-
-  const processingStage = determineProcessingStage(image);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowLeft' && hasPrevious) onPrevious();
-      if (e.key === 'ArrowRight' && hasNext) onNext();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onPrevious, onNext, hasNext, hasPrevious]);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center">
-      {/* Close Button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute top-4 right-4 text-white hover:bg-white/10"
-        onClick={onClose}
-      >
-        <X className="w-6 h-6" />
-      </Button>
-
-      {/* Navigation Buttons */}
-      {hasPrevious && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute left-4 text-white hover:bg-white/10"
-          onClick={onPrevious}
-        >
-          <ChevronLeft className="w-8 h-8" />
-        </Button>
-      )}
-
-      {hasNext && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute right-4 text-white hover:bg-white/10"
-          onClick={onNext}
-        >
-          <ChevronRight className="w-8 h-8" />
-        </Button>
-      )}
-
-      {/* Modal Content */}
-      <div className="max-w-7xl w-full mx-4">
-        {showDualView ? (
-          // Dual View: 2K + 4K Processing
-          <div className="grid grid-cols-2 gap-4">
-            {/* Left: 2K Available */}
-            <div>
-              <div className="relative">
-                <img 
-                  src={image.basic_upscale_url!}
-                  alt="2K Preview"
-                  className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
-                />
-                <Badge className="absolute top-4 left-4 bg-blue-500">2K Quality</Badge>
-              </div>
-              <p className="text-sm text-white/70 mt-2 text-center">
-                Available now
-              </p>
-            </div>
-
-            {/* Right: 4K Processing */}
-            <div>
-              <div className="relative aspect-square bg-muted/20 rounded-lg flex items-center justify-center">
-                <div className="text-center space-y-4">
-                  <Sparkles className="w-16 h-16 text-violet-400 animate-pulse mx-auto" />
-                  <div>
-                    <p className="text-lg font-medium text-white">4K Processing</p>
-                    <p className="text-sm text-white/70 mt-1">
-                      {processingStage}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <p className="text-sm text-white/70 mt-2 text-center">
-                Will be ready shortly
-              </p>
-            </div>
-          </div>
-        ) : (
-          // Single View: Final Image
-          <div className="text-center">
-            <img 
-              src={getFinalResultUrl(image, isProfessional)}
-              alt={`Sample ${sampleIndex + 1}`}
-              className="max-w-full max-h-[85vh] object-contain mx-auto rounded-lg"
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  email: string;
+  shop_name: string;
 }
 
 // ================================================================================
 // MAIN COMPONENT
 // ================================================================================
 
-export default function GenerationResults() {
+export default function GenerationResultsRevamped() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { toast } = useToast();
 
   // ============================================================================
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [isPipelineRunning, setIsPipelineRunning] = useState(false);
-  const [showBasicImages, setShowBasicImages] = useState(false);
   const [results, setResults] = useState<GenerationResult[]>([]);
+  const [project, setProject] = useState<ProjectData | null>(null);
   const [userSubscription, setUserSubscription] = useState<UserSubscription | null>(null);
-  const [selectedImageData, setSelectedImageData] = useState<{ image: GenerationImage; index: number } | null>(null);
-  const [generationFailed, setGenerationFailed] = useState(false);
-  const [failureDetails, setFailureDetails] = useState<any>(null);
-  const [executionIds, setExecutionIds] = useState<string[]>([]);
-  const [pipelineProgress, setPipelineProgress] = useState('Initializing...');
-  const [progressValue, setProgressValue] = useState(0);
+  const [selectedImageModal, setSelectedImageModal] = useState<{ image: GenerationImage; index: number } | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
   const [removingBgForImage, setRemovingBgForImage] = useState<string | null>(null);
-  const [pipelineStartTime] = useState(Date.now());
-  const [user, setUser] = useState<{ email: string; shopName: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPolling, setIsPolling] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // ============================================================================
-  // REFS FOR OPTIMIZATION
+  // COMPUTED VALUES
   // ============================================================================
 
-  const lastFetchTimeRef = useRef(0);
-  const lastProgressRef = useRef(0);
-  const fetchResultsRef = useRef<() => Promise<void>>();
+  const allImages = useMemo(() => {
+    return results.flatMap(r => r.images);
+  }, [results]);
+
+  const selectedCount = selectedImages.size;
 
   // ============================================================================
-  // FETCH RESULTS FUNCTION
+  // DATA FETCHING
   // ============================================================================
 
-  const fetchResults = useCallback(async (isPolling = false) => {
-    const now = Date.now();
-    const timeSinceLastFetch = now - lastFetchTimeRef.current;
-
-    // Debounce: Minimum 4 seconds between fetches
-    if (isPolling && timeSinceLastFetch < 4000) {
-      console.log('⏭️ Skipping fetch - debounce active');
-      return;
-    }
-
-    lastFetchTimeRef.current = now;
-
+  const fetchResults = useCallback(async () => {
     try {
-      console.log('📥 Fetching results...');
-      const response = await fetch(`/api/projects/${projectId}/results?_=${now}`);
+      const response = await fetch(`/api/projects/${projectId}/results?_=${Date.now()}`);
       const data = await response.json();
 
       if (data.success) {
         setResults(data.results || []);
-        
-        // Check if we should show basic images for Professional/Enterprise
-        if (userSubscription && hasEnhancedFeatures(userSubscription.tier)) {
-          const hasBasicReady = data.results?.some((result: GenerationResult) =>
-            result.images.some(img => 
-              img.basic_upscale_status === 'completed' && 
-              (img.face_swap_status !== 'completed' || img.upscale_status !== 'completed')
-            )
-          );
-          
-          if (hasBasicReady && !showBasicImages) {
-            setShowBasicImages(true);
-            toast({
-              title: "2K Images Ready",
-              description: "Viewing now while 4K processing continues in background",
-              duration: 3000
-            });
-          }
-
-          // Check if 4K is complete
-          const has4KComplete = data.results?.some((result: GenerationResult) =>
-            result.images.some(img => img.face_swap_status === 'completed')
-          );
-
-          if (has4KComplete && showBasicImages) {
-            setShowBasicImages(false);
-            toast({
-              title: "4K Processing Complete",
-              description: "Your high-resolution images are ready for download",
-              duration: 5000
-            });
-          }
-        }
       }
     } catch (error) {
-      console.error('❌ Error fetching results:', error);
+      console.error('Failed to fetch results:', error);
     }
-  }, [projectId, userSubscription, showBasicImages, toast]);
+  }, [projectId]);
 
-  // Update ref
-  useEffect(() => {
-    fetchResultsRef.current = fetchResults;
-  }, [fetchResults]);
+  const fetchProject = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}`);
+      const data = await response.json();
 
-  // ============================================================================
-  // STATUS POLLING CALLBACK
-  // ============================================================================
-
-  const handleStatusChange = useCallback((data: { 
-    executions: PipelineExecution[]; 
-    allCompleted: boolean; 
-    hasFailures: boolean;
-  }) => {
-    console.log('📊 Status update:', data);
-
-    // Check for failures FIRST
-    if (data.hasFailures) {
-      setGenerationFailed(true);
-      setIsPipelineRunning(false);
-      const failedExecution = data.executions.find(e => e.status === 'failed');
-      setFailureDetails({
-        supportMessage: failedExecution?.error_message || 'An error occurred during processing'
-      });
-      
-      toast({
-        variant: "destructive",
-        title: "Processing Unsuccessful",
-        description: "No credits were charged for this session"
-      });
-      return;
+      if (data.success) {
+        setProject(data.project);
+      }
+    } catch (error) {
+      console.error('Failed to fetch project:', error);
     }
+  }, [projectId]);
 
-    // Calculate progress
-    const avgProgress = data.executions.reduce((sum, e) => sum + e.progress, 0) / data.executions.length;
-    setProgressValue(Math.round(avgProgress));
+  const fetchUserSubscription = useCallback(async () => {
+    try {
+      const response = await fetch('/api/user/subscription-status');
+      const data = await response.json();
 
-    // Update time-based message
-    const elapsedSeconds = Math.floor((Date.now() - pipelineStartTime) / 1000);
-    setPipelineProgress(getTimeBasedMessage(elapsedSeconds));
-
-    // Check if we should fetch results
-    const progressDelta = Math.abs(avgProgress - lastProgressRef.current);
-    const timeSinceLastFetch = Date.now() - lastFetchTimeRef.current;
-
-    if (progressDelta >= 10) {
-      // Significant progress change - fetch immediately
-      console.log('📈 Significant progress change detected');
-      fetchResultsRef.current?.();
-      lastProgressRef.current = avgProgress;
-    } else if (timeSinceLastFetch >= 4000) {
-      // Debounce timer elapsed - fetch update
-      console.log('⏱️ Debounce timer elapsed');
-      fetchResultsRef.current?.();
+      if (data) {
+        setUserSubscription({
+          tier: data.tier || 'free',
+          email: data.email || '',
+          shop_name: data.shop_name || ''
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch subscription:', error);
     }
-
-    // All complete
-    if (data.allCompleted) {
-      console.log('✅ All executions complete');
-      setIsPipelineRunning(false);
-      fetchResultsRef.current?.();
-    }
-  }, [pipelineStartTime, toast]);
+  }, []);
 
   // ============================================================================
-  // POLLING HOOK
-  // ============================================================================
-
-  const { isPolling } = useMultiExecutionStatus(
-    executionIds,
-    isPipelineRunning && executionIds.length > 0,
-    handleStatusChange
-  );
-
-  // ============================================================================
-  // INITIALIZATION
+  // INITIALIZATION & POLLING
   // ============================================================================
 
   useEffect(() => {
     const init = async () => {
-      // Fetch user subscription
-      const subResponse = await fetch('/api/user/subscription-status');
-      const subData = await subResponse.json();
-      setUserSubscription(subData);
-      
-      // Set user info for navbar
-      if (subData) {
-        setUser({
-          email: subData.email || '',
-          shopName: subData.shop_name || ''
-        });
-      }
-
-      // Check if pipeline is running
-      const generating = searchParams.get('generating') === 'true';
-      const executionIdParam = searchParams.get('executionId');
-      
-      if (generating || executionIdParam) {
-        setIsPipelineRunning(true);
-        
-        if (executionIdParam) {
-          setExecutionIds(executionIdParam.split(','));
-        }
-      }
-
-      // Initial fetch
-      await fetchResults();
+      setIsLoading(true);
+      await Promise.all([
+        fetchResults(),
+        fetchProject(),
+        fetchUserSubscription()
+      ]);
+      setIsLoading(false);
     };
 
     init();
+  }, [projectId]);
+
+  // Polling for processing status
+  useEffect(() => {
+    const generating = searchParams.get('generating') === 'true';
+    
+    if (generating || isPolling) {
+      const interval = setInterval(fetchResults, 5000); // Poll every 5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [searchParams, isPolling, fetchResults]);
+
+  // Auto-stop polling when all images are complete
+  useEffect(() => {
+    if (allImages.length > 0) {
+      const allComplete = allImages.every(img => {
+        const tier = userSubscription?.tier || 'free';
+        const isProfessional = tier === 'professional' || tier === 'enterprise';
+
+        if (isProfessional) {
+          return img.face_swap_status === 'completed' || img.face_swap_status === 'not_available';
+        } else {
+          return img.basic_upscale_status === 'completed' || img.basic_upscale_status === 'not_available';
+        }
+      });
+
+      if (allComplete && isPolling) {
+        setIsPolling(false);
+      } else if (!allComplete && !isPolling) {
+        setIsPolling(true);
+      }
+    }
+  }, [allImages, userSubscription, isPolling]);
+
+  // ============================================================================
+  // SELECTION MODE HANDLERS
+  // ============================================================================
+
+  const toggleSelectionMode = useCallback(() => {
+    setSelectionMode(prev => !prev);
+    setSelectedImages(new Set());
+  }, []);
+
+  const toggleImageSelection = useCallback((imageId: string) => {
+    setSelectedImages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(imageId)) {
+        newSet.delete(imageId);
+      } else {
+        newSet.add(imageId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // ============================================================================
+  // PROJECT NAME EDITING
+  // ============================================================================
+
+  const handleProjectNameChange = useCallback(async (newName: string) => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/update-name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setProject(prev => prev ? { ...prev, name: newName } : null);
+      }
+    } catch (error) {
+      console.error('Failed to update project name:', error);
+    }
   }, [projectId]);
 
   // ============================================================================
@@ -780,14 +230,6 @@ export default function GenerationResults() {
     zipName: string
   ) => {
     try {
-      console.log('📦 Downloading ZIP:', zipName, images);
-      toast({
-        title: "Download Started",
-        description: `Preparing ${images.length} image(s)...`
-      });
-
-      // Dynamically import JSZip
-      const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
 
       // Download all images and add to ZIP
@@ -803,10 +245,8 @@ export default function GenerationResults() {
 
       await Promise.all(downloadPromises);
 
-      // Generate ZIP
+      // Generate and download ZIP
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      
-      // Download ZIP
       const link = document.createElement('a');
       link.href = URL.createObjectURL(zipBlob);
       link.download = zipName;
@@ -814,39 +254,22 @@ export default function GenerationResults() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
-
-      toast({
-        title: "Download Complete",
-        description: `${images.length} image(s) downloaded successfully`,
-        duration: 3000
-      });
     } catch (error) {
       console.error('Error creating ZIP:', error);
-      toast({
-        variant: "destructive",
-        title: "Download Failed",
-        description: "Failed to create download package"
-      });
     }
-  }, [toast]);
+  }, []);
 
-  const handleDownloadImage = useCallback(async (image: GenerationImage, sampleIndex: number) => {
-    const isProfessional = userSubscription && hasEnhancedFeatures(userSubscription.tier);
+  const handleDownloadImage = useCallback(async (image: GenerationImage, index: number) => {
+    const isProfessional = userSubscription?.tier === 'professional' || userSubscription?.tier === 'enterprise';
     const hasBgRemoved = !!image.generation_record?.removed_bg_url;
 
-    const images: { url: string; filename: string }[] = [];
+    const imagesToDownload: { url: string; filename: string }[] = [];
 
     // Always include 2K
-    images.push({
-      url: image.basic_upscale_url || image.image_url,
-      filename: `${sampleIndex + 1}_2K_Original.jpg`
-    });
-
-    // Add BG removed if exists
-    if (hasBgRemoved) {
-      images.push({
-        url: image.generation_record!.removed_bg_url!,
-        filename: `${sampleIndex + 1}_BG_Removed.png`
+    if (image.basic_upscale_url) {
+      imagesToDownload.push({
+        url: image.basic_upscale_url,
+        filename: `${project?.name || 'image'}_${index + 1}_2K.png`
       });
     }
 
@@ -854,31 +277,102 @@ export default function GenerationResults() {
     if (isProfessional) {
       const enhancedUrl = image.face_swap_image_url || image.upscaled_image_url;
       if (enhancedUrl) {
-        images.push({
+        imagesToDownload.push({
           url: enhancedUrl,
-          filename: `${sampleIndex + 1}_4K_Enhanced.jpg`
+          filename: `${project?.name || 'image'}_${index + 1}_4K.png`
         });
       }
     }
 
-    if (images.length > 1) {
-      await downloadAsZip(images, `image-${sampleIndex + 1}-bundle.zip`);
-    } else {
-      // Single file download
-      window.open(images[0].url, '_blank');
+    // Add BG removed if exists
+    if (hasBgRemoved) {
+      imagesToDownload.push({
+        url: image.generation_record!.removed_bg_url!,
+        filename: `${project?.name || 'image'}_${index + 1}_BG_Removed.png`
+      });
     }
-  }, [userSubscription, downloadAsZip]);
+
+    // Download as ZIP if multiple files, otherwise direct download
+    if (imagesToDownload.length > 1) {
+      await downloadAsZip(imagesToDownload, `${project?.name || 'image'}_${index + 1}.zip`);
+    } else if (imagesToDownload.length === 1) {
+      // Direct download for single image
+      try {
+        const response = await fetch(imagesToDownload[0].url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = imagesToDownload[0].filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (error) {
+        console.error('Download failed:', error);
+        // Fallback to opening in new tab if download fails
+        window.open(imagesToDownload[0].url, '_blank');
+      }
+    }
+  }, [userSubscription, project, downloadAsZip]);
+
+  const handleDownloadAll = useCallback(async () => {
+    const imagesToDownload = selectionMode && selectedCount > 0
+      ? allImages.filter(img => selectedImages.has(img.id))
+      : allImages;
+
+    const isProfessional = userSubscription?.tier === 'professional' || userSubscription?.tier === 'enterprise';
+    const files: { url: string; filename: string }[] = [];
+
+    imagesToDownload.forEach((image, index) => {
+      // 2K version
+      if (image.basic_upscale_url) {
+        files.push({
+          url: image.basic_upscale_url,
+          filename: `${index + 1}_2K.png`
+        });
+      }
+
+      // 4K version (Professional/Enterprise)
+      if (isProfessional) {
+        const enhancedUrl = image.face_swap_image_url || image.upscaled_image_url;
+        if (enhancedUrl) {
+          files.push({
+            url: enhancedUrl,
+            filename: `${index + 1}_4K.png`
+          });
+        }
+      }
+
+      // BG removed version
+      if (image.generation_record?.removed_bg_url) {
+        files.push({
+          url: image.generation_record.removed_bg_url,
+          filename: `${index + 1}_BG_Removed.png`
+        });
+      }
+    });
+
+    const zipName = selectionMode && selectedCount > 0
+      ? `${project?.name || 'images'}_Selected_${selectedCount}.zip`
+      : `${project?.name || 'images'}_All.zip`;
+
+    await downloadAsZip(files, zipName);
+
+    // Exit selection mode after download
+    if (selectionMode) {
+      setSelectionMode(false);
+      setSelectedImages(new Set());
+    }
+  }, [allImages, selectedImages, selectedCount, selectionMode, userSubscription, project, downloadAsZip]);
+
+  // ============================================================================
+  // BACKGROUND REMOVAL HANDLER
+  // ============================================================================
 
   const handleRemoveBackground = useCallback(async (image: GenerationImage) => {
-    if (!userSubscription || userSubscription.credits_balance < 500) {
-      toast({
-        variant: "destructive",
-        title: "Insufficient Credits",
-        description: "You need 500 credits to remove background"
-      });
-      return;
-    }
-
     setRemovingBgForImage(image.id);
 
     try {
@@ -891,190 +385,258 @@ export default function GenerationResults() {
       const data = await response.json();
 
       if (data.success) {
-        toast({
-          title: "Background Removed!",
-          description: `500 credits deducted. ${data.remaining_credits} credits remaining`,
-          duration: 5000
-        });
-        
-        // Refresh results
+        // Refresh results to show updated image
         await fetchResults();
-      } else {
-        throw new Error(data.error);
       }
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Background Removal Failed",
-        description: error.message
-      });
+    } catch (error) {
+      console.error('Background removal failed:', error);
     } finally {
       setRemovingBgForImage(null);
     }
-  }, [userSubscription, toast, fetchResults]);
+  }, [fetchResults]);
 
   // ============================================================================
-  // RENDER HELPERS
+  // NAVIGATION HANDLERS
   // ============================================================================
 
-  const expectedImageCount = parseInt(searchParams.get('imageCount') || '1');
-  
-  const shouldShowPlaceholders = useMemo(() => {
-    if (!isPipelineRunning) return false;
-    if (!results || results.length === 0) return true;
+  const handleGenerateMore = useCallback(() => {
+    navigate('/app/studio');
+  }, [navigate]);
 
-    const allImages = results.flatMap(r => r.images);
-    if (allImages.length < expectedImageCount) return true;
+  const handleImageClick = useCallback((image: GenerationImage, index: number) => {
+    if (!selectionMode) {
+      setSelectedImageModal({ image, index });
+    } else {
+      toggleImageSelection(image.id);
+    }
+  }, [selectionMode, toggleImageSelection]);
 
-    // Check if images are ready based on tier
-    const isProfessional = userSubscription && hasEnhancedFeatures(userSubscription.tier);
-    
-    return !allImages.every(img => {
-      if (isProfessional) {
-        return img.basic_upscale_url && img.basic_upscale_status === 'completed';
-      } else {
-        return img.image_url;
-      }
-    });
-  }, [isPipelineRunning, results, expectedImageCount, userSubscription]);
+  const handleModalNavigation = useCallback((direction: 'prev' | 'next') => {
+    if (!selectedImageModal) return;
 
-  const allImages = useMemo(() => {
-    return results.flatMap(r => r.images);
-  }, [results]);
+    const newIndex = direction === 'prev' 
+      ? selectedImageModal.index - 1 
+      : selectedImageModal.index + 1;
+
+    if (newIndex >= 0 && newIndex < allImages.length) {
+      setSelectedImageModal({ image: allImages[newIndex], index: newIndex });
+    }
+  }, [selectedImageModal, allImages]);
 
   // ============================================================================
-  // RENDER: FAILURE STATE
+  // LOADING STATE
   // ============================================================================
 
-  if (generationFailed) {
+  if (isLoading) {
     return (
-      <div className="container max-w-4xl mx-auto py-8">
-        <Card className="border-destructive">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-6 h-6 text-destructive" />
-              <div>
-                <CardTitle>Processing Unsuccessful</CardTitle>
-                <CardDescription>
-                  {failureDetails?.supportMessage || 'An error occurred during processing'}
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          
-          <CardContent>
-            <Alert variant="default" className="bg-blue-50 border-blue-200">
-              <Info className="w-4 h-4 text-blue-600" />
-              <AlertDescription className="text-blue-900">
-                No credits were charged for this session
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-          
-          <CardFooter className="flex gap-2">
-            <Button onClick={() => navigate('/app/studio')}>
-              Try Again
-            </Button>
-            <Button variant="outline" onClick={() => navigate('/app/projects')}>
-              Back to Projects
-            </Button>
-          </CardFooter>
-        </Card>
+      <div className="min-h-screen bg-background">
+        <BackButton />
+        
+        <div className="max-w-6xl mx-auto px-4 py-8">
+          {/* Header Skeleton */}
+          <div className="mb-8">
+            <div className="h-8 w-64 bg-muted animate-pulse rounded"></div>
+            <div className="h-4 w-32 bg-muted animate-pulse rounded mt-2"></div>
+          </div>
+
+          {/* Grid Skeleton */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <LoadingSkeleton key={i} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
 
   // ============================================================================
-  // RENDER: MAIN PAGE
+  // RENDER
   // ============================================================================
 
   return (
-    <div className="container max-w-7xl mx-auto py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/app/projects')}
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold">Generation Results</h1>
-            {isPipelineRunning && (
-              <p className="text-sm text-muted-foreground mt-1">
-                {pipelineProgress}
-              </p>
-            )}
+    <div className="min-h-screen bg-background font-['Inter']">
+      {/* Mobile Back Button (visible on mobile only) */}
+      <BackButton />
+
+      {/* Header Section - Exact Design Match */}
+      <div className="bg-background">
+        <div className="max-w-6xl mx-auto px-4 py-8 lg:py-8 pt-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            
+            {/* Left: Project Name Section with Back Button */}
+            <div className="flex-1">
+              <div className="lg:mt-0 -mt-2">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4">
+                  {/* Desktop Back Button + Project Title with Edit Button + Timestamp */}
+                  <div className="flex items-center gap-3">
+                    {/* Back Button (visible on desktop only) */}
+                    <button
+                      onClick={() => navigate('/app/projects')}
+                      className="hidden lg:flex items-center justify-center p-2 hover:bg-muted rounded-md transition-colors"
+                      aria-label="Back to Projects"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                      </svg>
+                    </button>
+
+                    {/* Title and Timestamp stacked */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 group">
+                        <button 
+                          onClick={() => setIsEditModalOpen(true)}
+                          className="text-xl sm:text-2xl font-bold text-foreground hover:text-primary transition-colors text-left bg-transparent border-none outline-none"
+                        >
+                          {project?.name || 'Untitled project'}
+                        </button>
+                        <button 
+                          onClick={() => setIsEditModalOpen(true)}
+                          className="p-1 sm:p-2 hover:bg-muted rounded-md flex items-center justify-center ml-1 sm:ml-0"
+                        >
+                          <svg className="w-4 h-4 text-muted-foreground hover:text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                          </svg>
+                        </button>
+                      </div>
+                      
+                      {/* Timestamp */}
+                      {project && (
+                        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                          </svg>
+                          <span>Created {new Date(project.created_at).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Mobile Action Icons (visible on mobile only) */}
+                  <div className="flex items-center gap-2 lg:hidden">
+                    <button 
+                      onClick={handleGenerateMore}
+                      className="p-2 hover:bg-muted rounded-md transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={handleDownloadAll}
+                      className="p-2 hover:bg-muted rounded-md transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={toggleSelectionMode}
+                      className={`p-2 hover:bg-muted rounded-md transition-colors ${selectionMode ? 'bg-primary text-primary-foreground' : ''}`}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Desktop Action Buttons (hidden on mobile) */}
+            <div className="hidden lg:flex flex-col sm:flex-row gap-3">
+              <button 
+                onClick={handleGenerateMore}
+                className="px-4 py-2.5 bg-background border border-border rounded-md font-medium text-sm hover:bg-muted transition-colors whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Generate More
+              </button>
+              
+              <button 
+                onClick={handleDownloadAll}
+                className={`px-4 py-2.5 rounded-md font-medium text-sm whitespace-nowrap flex items-center justify-center gap-2 transition-colors ${
+                  selectionMode && selectedCount > 0
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'bg-background border border-border hover:bg-muted'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                {selectionMode && selectedCount > 0 ? `Download Selected (${selectedCount})` : 'Download All'}
+              </button>
+              
+              <button 
+                onClick={toggleSelectionMode}
+                className={`px-4 py-2.5 rounded-md font-medium text-sm whitespace-nowrap flex items-center justify-center gap-2 transition-colors ${
+                  selectionMode
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'bg-background border border-border hover:bg-muted'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                {selectionMode ? 'Cancel Selection' : 'Select Images'}
+              </button>
+            </div>
           </div>
         </div>
-
-        {userSubscription && (
-          <div className="text-right">
-            <p className="text-sm text-muted-foreground">Credits</p>
-            <p className="text-2xl font-bold">{userSubscription.credits_balance?.toLocaleString() || '0'}</p>
-          </div>
-        )}
       </div>
 
-      {/* Progress Bar */}
-      {isPipelineRunning && (
-        <div className="mb-6">
-          <Progress value={progressValue} className="h-2" />
-          <p className="text-xs text-muted-foreground text-center mt-2">
-            {progressValue}% Complete
-          </p>
+      {/* Images Grid Section */}
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {allImages.length > 0 ? (
+            allImages.map((image, index) => (
+              <ResultCard
+                key={image.id}
+                image={image}
+                userTier={userSubscription?.tier || 'free'}
+                onImageClick={() => handleImageClick(image, index)}
+                onDownload={() => handleDownloadImage(image, index)}
+                onRemoveBackground={() => handleRemoveBackground(image)}
+                isRemovingBg={removingBgForImage === image.id}
+                selectionMode={selectionMode}
+                isSelected={selectedImages.has(image.id)}
+                onSelectionChange={() => toggleImageSelection(image.id)}
+                clothingImageUrl={project?.clothing_image_url}
+              />
+            ))
+          ) : (
+            // Show loading skeletons if no images yet
+            Array.from({ length: 6 }).map((_, i) => (
+              <LoadingSkeleton key={i} progress={isPolling ? 50 : undefined} />
+            ))
+          )}
         </div>
-      )}
-
-      {/* Image Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {shouldShowPlaceholders ? (
-          // Show placeholders
-          Array.from({ length: expectedImageCount }).map((_, i) => (
-            <PlaceholderCard key={`placeholder-${i}`} progress={progressValue} />
-          ))
-        ) : (
-          // Show actual images
-          allImages.map((image, index) => (
-            <ImageCard
-              key={image.id}
-              image={image}
-              sampleIndex={index}
-              userTier={userSubscription?.tier || 'free'}
-              onImageClick={() => setSelectedImageData({ image, index })}
-              onDownload={() => handleDownloadImage(image, index)}
-              onRemoveBackground={() => handleRemoveBackground(image)}
-              isRemovingBg={removingBgForImage === image.id}
-            />
-          ))
-        )}
       </div>
 
       {/* Image Modal */}
-      {selectedImageData && (
+      {selectedImageModal && (
         <ImageModal
-          image={selectedImageData.image}
-          sampleIndex={selectedImageData.index}
+          image={selectedImageModal.image}
           userTier={userSubscription?.tier || 'free'}
-          onClose={() => setSelectedImageData(null)}
-          onPrevious={() => {
-            const newIndex = selectedImageData.index - 1;
-            if (newIndex >= 0) {
-              setSelectedImageData({ image: allImages[newIndex], index: newIndex });
-            }
-          }}
-          onNext={() => {
-            const newIndex = selectedImageData.index + 1;
-            if (newIndex < allImages.length) {
-              setSelectedImageData({ image: allImages[newIndex], index: newIndex });
-            }
-          }}
-          hasNext={selectedImageData.index < allImages.length - 1}
-          hasPrevious={selectedImageData.index > 0}
+          onClose={() => setSelectedImageModal(null)}
+          onPrevious={() => handleModalNavigation('prev')}
+          onNext={() => handleModalNavigation('next')}
+          hasNext={selectedImageModal.index < allImages.length - 1}
+          hasPrevious={selectedImageModal.index > 0}
+          projectName={project?.name || 'image'}
+          imageIndex={selectedImageModal.index}
         />
       )}
+
+      {/* Edit Project Name Modal */}
+      <EditProjectNameModal
+        isOpen={isEditModalOpen}
+        currentName={project?.name || 'Untitled project'}
+        onClose={() => setIsEditModalOpen(false)}
+        onSave={handleProjectNameChange}
+      />
     </div>
   );
 }

@@ -255,33 +255,7 @@ export default function Studio() {
       const clothingImageUrl = uploadResult.url;
       console.log("✅ Clothing image uploaded:", clothingImageUrl);
 
-      // Step 2: Deduct credits via API
-      console.log("💳 Deducting credits...");
-      
-      const creditsResponse = await fetch("/api/credits/deduct", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          amount: totalCredits,
-          description: `AI Generation: ${selectedPoses.length} images`,
-          featureType: "ai_generation",
-        }),
-      });
-
-      const creditsResult = await creditsResponse.json();
-
-      if (!creditsResult.success) {
-        setGenerationError(creditsResult.error || "Failed to deduct credits");
-        setIsGenerating(false);
-        return;
-      }
-
-      console.log("✅ Credits deducted:", creditsResult.creditsConsumed);
-      console.log("✅ Remaining balance:", creditsResult.remainingBalance);
-
-      // Step 3: Prepare poses array with URLs from selectedPoseObjects (only selected ones)
+      // Step 2: Prepare poses array with URLs from selectedPoseObjects (only selected ones)
       const posesArray = selectedPoseObjects
         .filter(pose => selectedPoses.includes(pose.id))
         .map(pose => ({
@@ -293,8 +267,9 @@ export default function Studio() {
       console.log("📸 Sending poses:", posesArray.length, "poses");
       console.log("📝 Selected pose IDs:", selectedPoses);
 
-      // Step 4: Execute the pipeline
+      // Step 3: Execute the pipeline (credits will be deducted inside the pipeline)
       console.log("🚀 Starting pipeline execution...");
+      console.log("💳 Credits will be deducted: ", totalCredits, "(", selectedPoses.length, "poses × 1000 credits)");
       
       const pipelineResponse = await fetch("/api/pipeline/execute", {
         method: "POST",
@@ -305,7 +280,7 @@ export default function Studio() {
           base_model_id: selectedModel,
           clothing_image_url: clothingImageUrl,
           poses: posesArray,
-          project_name: `Generation ${new Date().toLocaleString()}`,
+          project_name: 'Untitled project',
           project_description: `AI try-on with ${selectedPoses.length} pose(s)`,
         }),
       });
@@ -319,7 +294,6 @@ export default function Studio() {
       }
 
       console.log("✅ Pipeline started:", pipelineResult);
-      console.log(`✅ Credits deducted: ${creditsResult.creditsConsumed}, Remaining: ${creditsResult.remainingBalance}`);
 
       // Redirect to generation results page with the project ID
       navigate(`/app/generation-results/${pipelineResult.project_id}?generating=true`);
