@@ -5,6 +5,12 @@
 
 import { fal } from "@fal-ai/client";
 import Replicate from "replicate";
+import {
+  uploadToShopifyGenerationsBucket,
+  downloadImageAsBuffer,
+  generateUniqueFileName,
+  type UploadResult,
+} from "./storage.service";
 
 // =============================================
 // TYPES
@@ -76,7 +82,8 @@ if (!REPLICATE_API_TOKEN) {
 export async function executeTryOn(
   modelImageUrl: string,
   clothingImageUrl: string,
-  quality: QualityLevel = 'standard'
+  quality: QualityLevel = 'standard',
+  gender: 'male' | 'female' = 'female'
 ): Promise<TryOnResult> {
   if (!FAL_API_KEY) {
     throw new Error('FAL AI API key is not configured');
@@ -87,15 +94,19 @@ export async function executeTryOn(
       model: modelImageUrl.substring(0, 80) + '...',
       clothing: clothingImageUrl.substring(0, 80) + '...',
       quality,
+      gender,
     });
 
-    // Use Fashion Try-On model for virtual try-on
-    // This is the same model configuration that works in your main project
+    // Use Fashion Try-On model for virtual try-on (easel-ai/fashion-tryon)
+    // Configuration:
+    // - full_body_image: URL of the model/person image
+    // - clothing_image: URL of the clothing/garment image
+    // - gender: 'male' or 'female' (defaults to 'female')
     const result = await fal.subscribe('easel-ai/fashion-tryon', {
       input: {
         full_body_image: modelImageUrl as any,
         clothing_image: clothingImageUrl as any,
-        gender: "female" as any,
+        gender: gender as any,
       },
       logs: true,
       onQueueUpdate: (update: any) => {
@@ -156,6 +167,7 @@ export async function executeBasicUpscale(imageUrl: string): Promise<UpscaleResu
     const startTime = Date.now();
 
     // Use CodeFormer for face upsampling and enhancement (Replicate)
+    // Configuration for ALL tiers (Free, Starter, Professional, Enterprise)
     const version = "cc4956dd26fa5a7185d5660cc9100fab1b8070a1d1654a8bb5eb6d443b020bb2";
     
     const response = await fetch("https://api.replicate.com/v1/predictions", {
@@ -168,10 +180,10 @@ export async function executeBasicUpscale(imageUrl: string): Promise<UpscaleResu
         version,
         input: {
           image: imageUrl,
-          codeformer_fidelity: 0.7,
+          codeformer_fidelity: 0.1,  // CodeFormer fidelity weight
           background_enhance: false,
-          face_upsample: true,
-          upscale: 2,
+          face_upsample: false,
+          upscale: 1,                 // Upscaling factor (no upscaling, just enhancement)
         },
       }),
     });
@@ -350,19 +362,50 @@ export async function executeFaceSwap(
     // Model: trayve-us/swap-model with specific version hash
     const modelVersion = "trayve-us/swap-model:7c647d4895ea2d5ff80ff3374709e3b35fa6ae070920f2ecf5d0c118b1a4a0f2";
     console.log('🚀 Submitting to Replicate API...');
+    console.log('⏳ Face swap processing started...');
     
-    const output = await replicate.run(
-      modelVersion as any,
-      {
-        input: {
-          source_image: sourceImageUrl,  // Face to extract FROM
-          target_image: targetImageUrl,  // Image to apply face TO
-        }
+    // Create prediction and poll for updates
+    const prediction = await replicate.predictions.create({
+      version: modelVersion.split(':')[1],
+      input: {
+        source_image: sourceImageUrl,  // Face to extract FROM
+        target_image: targetImageUrl,  // Image to apply face TO
       }
-    );
-
+    });
+    
+    console.log(`📋 Prediction ID: ${prediction.id}`);
+    console.log(`📊 Initial status: ${prediction.status}`);
+    
+    // Poll for completion with progress updates
+    let currentPrediction = prediction;
+    let lastLogTime = Date.now();
+    
+    while (currentPrediction.status !== 'succeeded' && currentPrediction.status !== 'failed' && currentPrediction.status !== 'canceled') {
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Poll every second
+      
+      currentPrediction = await replicate.predictions.get(prediction.id);
+      
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      
+      // Log progress every 5 seconds
+      if (Date.now() - lastLogTime > 5000) {
+        console.log(`⏳ Face swap in progress... (${elapsed}s elapsed, status: ${currentPrediction.status})`);
+        lastLogTime = Date.now();
+      }
+    }
+    
+    if (currentPrediction.status === 'failed') {
+      const errorMsg = typeof currentPrediction.error === 'string' ? currentPrediction.error : 'Face swap failed';
+      throw new Error(errorMsg);
+    }
+    
+    if (currentPrediction.status === 'canceled') {
+      throw new Error('Face swap was canceled');
+    }
+    
+    const output = currentPrediction.output;
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`✅ Face swap API call completed in ${totalTime}s`);
+    console.log(`✅ Face swap processing completed in ${totalTime}s`);
     console.log(`🔍 Output type: ${typeof output}`);
     console.log(`🔍 Output value:`, output);
 
@@ -444,10 +487,9 @@ export async function executeFaceSwap(
 export function getEnabledSteps(tier: string): PipelineStep[] {
   const tierSteps: Record<string, PipelineStep[]> = {
     free: ['tryon', 'basic-upscale'],
-    starter: ['tryon', 'basic-upscale'],
     creator: ['tryon', 'basic-upscale'],
-    professional: ['tryon', 'enhanced-upscale', 'replicate-face-swap'],
-    enterprise: ['tryon', 'enhanced-upscale', 'replicate-face-swap'],
+    professional: ['tryon', 'basic-upscale', 'enhanced-upscale', 'replicate-face-swap'],
+    enterprise: ['tryon', 'basic-upscale', 'enhanced-upscale', 'replicate-face-swap'],
   };
 
   return tierSteps[tier] || tierSteps.free;
@@ -459,7 +501,6 @@ export function getEnabledSteps(tier: string): PipelineStep[] {
 export function getQualityLevel(tier: string): QualityLevel {
   const tierQuality: Record<string, QualityLevel> = {
     free: 'standard',
-    starter: 'standard',
     creator: 'high',
     professional: 'premium',
     enterprise: 'premium',
@@ -476,6 +517,7 @@ export interface PipelineConfig {
   tier: string;
   enabledSteps?: PipelineStep[];
   quality?: QualityLevel;
+  gender?: 'male' | 'female';
 }
 
 export interface PipelineStepResult {
@@ -487,19 +529,70 @@ export interface PipelineStepResult {
   processingTime?: number;
 }
 
+// =============================================
+// HELPER FUNCTIONS
+// =============================================
+
+/**
+ * Upload step image to Supabase storage
+ * Downloads image from AI provider URL and uploads to Supabase
+ * @param aiProviderUrl - URL from FAL/Replicate
+ * @param stepType - Pipeline step type
+ * @param executionId - Unique execution ID
+ * @returns Supabase public URL
+ */
+async function uploadStepImageToSupabase(
+  aiProviderUrl: string,
+  stepType: PipelineStep,
+  executionId: string
+): Promise<string> {
+  try {
+    console.log(`📤 Uploading ${stepType} image to Supabase...`);
+    console.log(`   AI Provider URL: ${aiProviderUrl.substring(0, 80)}...`);
+    
+    // Download image from AI provider
+    const imageBuffer = await downloadImageAsBuffer(aiProviderUrl);
+    console.log(`✅ Downloaded image: ${imageBuffer.length} bytes`);
+    
+    // Generate unique filename
+    const fileName = generateUniqueFileName('png', `${executionId}/${stepType}`);
+    
+    // Upload to Supabase
+    const uploadResult = await uploadToShopifyGenerationsBucket(
+      imageBuffer,
+      fileName,
+      'image/png'
+    );
+    
+    console.log(`✅ Uploaded to Supabase: ${uploadResult.url.substring(0, 80)}...`);
+    return uploadResult.url;
+  } catch (error) {
+    console.error(`❌ Failed to upload ${stepType} image to Supabase:`, error);
+    // Fall back to AI provider URL if upload fails
+    return aiProviderUrl;
+  }
+}
+
+// =============================================
+// PIPELINE EXECUTION
+// =============================================
+
 /**
  * Execute full pipeline with tier-based steps
  * @param modelImageUrl - URL of the model/pose image
  * @param clothingImageUrl - URL of the clothing item
  * @param config - Pipeline configuration
+ * @param executionId - Unique execution ID for storage path
  */
 export async function executePipeline(
   modelImageUrl: string,
   clothingImageUrl: string,
-  config: PipelineConfig
+  config: PipelineConfig,
+  executionId: string
 ): Promise<PipelineStepResult[]> {
   const enabledSteps = config.enabledSteps || getEnabledSteps(config.tier);
   const quality = config.quality || getQualityLevel(config.tier);
+  const gender = config.gender || 'female';
   
   const results: PipelineStepResult[] = [];
   let currentImageUrl = '';
@@ -508,20 +601,25 @@ export async function executePipeline(
     tier: config.tier,
     steps: enabledSteps,
     quality,
+    gender,
   });
 
   // Step 1: Try-On (Required)
   if (enabledSteps.includes('tryon')) {
     const startTime = Date.now();
     try {
-      const tryOnResult = await executeTryOn(modelImageUrl, clothingImageUrl, quality);
-      currentImageUrl = tryOnResult.image_url;
+      const tryOnResult = await executeTryOn(modelImageUrl, clothingImageUrl, quality, gender);
+      const aiProviderUrl = tryOnResult.image_url;
+      
+      // Upload to Supabase immediately
+      const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'tryon', executionId);
+      currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step (bypasses 5MB limit)
       
       results.push({
         stepType: 'tryon',
         status: 'completed',
-        imageUrl: currentImageUrl,
-        originalUrl: currentImageUrl,  // FAL.AI URL (stays <5MB)
+        imageUrl: supabaseUrl,  // Store Supabase URL in metadata
+        originalUrl: aiProviderUrl,  // Keep AI provider URL for next step
         processingTime: Date.now() - startTime,
       });
     } catch (error) {
@@ -542,14 +640,17 @@ export async function executePipeline(
     const startTime = Date.now();
     try {
       const upscaleResult = await executeBasicUpscale(currentImageUrl);
-      const originalUrl = upscaleResult.image_url;  // Replicate URL
-      currentImageUrl = originalUrl;
+      const aiProviderUrl = upscaleResult.image_url;  // Replicate URL
+      
+      // Upload to Supabase immediately
+      const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'basic-upscale', executionId);
+      currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step
       
       results.push({
         stepType: 'basic-upscale',
         status: 'completed',
-        imageUrl: currentImageUrl,
-        originalUrl: originalUrl,  // Keep Replicate URL for next step
+        imageUrl: supabaseUrl,  // Store Supabase URL in metadata
+        originalUrl: aiProviderUrl,  // Keep Replicate URL for next step
         processingTime: Date.now() - startTime,
       });
     } catch (error) {
@@ -574,13 +675,17 @@ export async function executePipeline(
       
       console.log(`📥 Enhanced upscale input: ${inputUrl.substring(0, 80)}...`);
       const enhancedResult = await executeEnhancedUpscale(inputUrl);
-      currentImageUrl = enhancedResult.image_url;
+      const aiProviderUrl = enhancedResult.image_url;
+      
+      // Upload to Supabase immediately
+      const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'enhanced-upscale', executionId);
+      currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step
       
       results.push({
         stepType: 'enhanced-upscale',
         status: 'completed',
-        imageUrl: currentImageUrl,
-        originalUrl: currentImageUrl,  // FAL.AI URL
+        imageUrl: supabaseUrl,  // Store Supabase URL in metadata
+        originalUrl: aiProviderUrl,  // FAL.AI URL for next step
         processingTime: Date.now() - startTime,
       });
     } catch (error) {
@@ -603,15 +708,20 @@ export async function executePipeline(
       console.log(`   Input: ${currentImageUrl.substring(0, 80)}...`);
       
       const faceSwapResult = await executeFaceSwap(modelImageUrl, currentImageUrl);
-      currentImageUrl = faceSwapResult.output;
+      const aiProviderUrl = faceSwapResult.output;
+      
+      // Upload to Supabase immediately
+      const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'replicate-face-swap', executionId);
+      currentImageUrl = aiProviderUrl;  // Update for final result
       
       console.log(`✅ Face Swap completed successfully`);
-      console.log(`   Output: ${currentImageUrl.substring(0, 80)}...`);
+      console.log(`   Output: ${aiProviderUrl.substring(0, 80)}...`);
       
       results.push({
         stepType: 'replicate-face-swap',
         status: 'completed',
-        imageUrl: currentImageUrl,
+        imageUrl: supabaseUrl,  // Store Supabase URL in metadata
+        originalUrl: aiProviderUrl,  // Keep Replicate URL
         processingTime: Date.now() - startTime,
       });
     } catch (error) {

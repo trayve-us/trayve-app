@@ -405,6 +405,16 @@ export default function GenerationResultsRevamped() {
 
   const handleImageClick = useCallback((image: GenerationImage, index: number) => {
     if (!selectionMode) {
+      // DEBUG: Log what we're passing to the modal
+      console.log('🖼️ Opening modal with image:', {
+        id: image.id,
+        basic_upscale_url: image.basic_upscale_url ? 'EXISTS' : 'MISSING',
+        basic_upscale_status: image.basic_upscale_status,
+        upscaled_image_url: image.upscaled_image_url ? 'EXISTS' : 'MISSING',
+        upscale_status: image.upscale_status,
+        face_swap_image_url: image.face_swap_image_url ? 'EXISTS' : 'MISSING',
+        face_swap_status: image.face_swap_status,
+      });
       setSelectedImageModal({ image, index });
     } else {
       toggleImageSelection(image.id);

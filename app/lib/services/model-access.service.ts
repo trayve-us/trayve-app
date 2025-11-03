@@ -60,7 +60,7 @@ export function isModelLocked(
   tier: SubscriptionTier
 ): boolean {
   // All models are unlocked for users with ANY paid plan
-  // Once a user purchases any plan (starter, professional, enterprise),
+  // Once a user purchases any plan (creator, professional, enterprise),
   // they get access to all models
   if (tier !== "free") {
     return false;
@@ -167,8 +167,7 @@ export function getSubscriptionTier(metadata?: { subscriptionTier?: string }): S
   // Map plan names to tier types
   if (tier === "professional" || tier === "plan_professional") return "professional";
   if (tier === "enterprise" || tier === "plan_enterprise") return "enterprise";
-  if (tier === "creator" || tier === "plan_creator") return "creator"; // Creator plan
-  if (tier === "starter" || tier === "plan_starter") return "creator"; // Legacy starter maps to creator
+  if (tier === "creator" || tier === "plan_creator" || tier === "starter" || tier === "plan_starter") return "creator"; // Creator plan (legacy starter also maps here)
   
   return "free";
 }

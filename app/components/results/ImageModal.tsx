@@ -49,8 +49,33 @@ export function ImageModal({
 }: ImageModalProps) {
   const isProfessionalOrEnterprise = userTier === 'professional' || userTier === 'enterprise';
   const hasBgRemoved = !!image.generation_record?.removed_bg_url;
-  const has4K = isProfessionalOrEnterprise && (image.face_swap_image_url || image.upscaled_image_url);
-  const has2K = !!image.basic_upscale_url;
+  
+  // CRITICAL FIX: Check if 4K is available by checking BOTH the URL and the status
+  // URLs might be empty strings '', so check length > 0
+  const has4K = isProfessionalOrEnterprise && (
+    (image.upscale_status === 'completed' && !!image.upscaled_image_url && image.upscaled_image_url.length > 0) ||
+    (image.face_swap_status === 'completed' && !!image.face_swap_image_url && image.face_swap_image_url.length > 0)
+  );
+  
+  const has2K = !!image.basic_upscale_url && image.basic_upscale_url.length > 0;
+  
+  // DEBUG: Add visual indicator to see what's happening
+  const debugInfo = {
+    tier: userTier,
+    isPro: isProfessionalOrEnterprise,
+    upscale_status: image.upscale_status,
+    upscaled_url_type: typeof image.upscaled_image_url,
+    upscaled_url_value: image.upscaled_image_url,
+    upscaled_url_length: image.upscaled_image_url?.length || 0,
+    face_swap_status: image.face_swap_status,
+    face_swap_url_type: typeof image.face_swap_image_url,
+    face_swap_url_length: image.face_swap_image_url?.length || 0,
+    has4K,
+    has2K,
+  };
+  
+  // Log for debugging (console only, no fetch)
+  console.log('ImageModal Debug:', debugInfo);
 
   // Determine how many columns to show
   const getColumnCount = () => {
@@ -150,16 +175,13 @@ export function ImageModal({
                   alt="2K Original"
                   className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain rounded-lg shadow-xl"
                 />
-                <div className="absolute top-4 left-4 bg-gradient-to-r from-emerald-500 to-green-500 text-white px-3 py-1.5 rounded-md text-sm font-semibold shadow-lg flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  2K Ready
+                <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
+                  2K Original
                 </div>
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
                   <button 
                     onClick={() => handleDownload(image.basic_upscale_url!, `${projectName}_${imageIndex + 1}_2K.png`)}
-                    className="px-4 py-2 bg-white/95 backdrop-blur-sm border border-border rounded-md hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
+                    className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -178,16 +200,13 @@ export function ImageModal({
                   alt="4K Enhanced"
                   className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain rounded-lg shadow-xl"
                 />
-                <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-3 py-1.5 rounded-md text-sm font-semibold shadow-lg flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
-                  </svg>
-                  4K Ready
+                <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
+                  4K Enhanced
                 </div>
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
                   <button 
                     onClick={() => handleDownload(image.face_swap_image_url || image.upscaled_image_url!, `${projectName}_${imageIndex + 1}_4K.png`)}
-                    className="px-4 py-2 bg-white/95 backdrop-blur-sm border border-border rounded-md hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
+                    className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -200,14 +219,13 @@ export function ImageModal({
             
             {/* Column 3: BG Removed (if available) */}
             {hasBgRemoved && (
-              <div className="flex-1 relative flex flex-col items-center justify-center">
+              <div className="flex-1 relative flex flex-col items-center justify-center min-w-0">
                 <img 
                   src={image.generation_record!.removed_bg_url!}
                   alt="Background Removed"
-                  className="max-w-full max-h-[calc(85vh-80px)] object-contain rounded-lg"
-                  style={{ backgroundColor: 'transparent' }}
+                  className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain"
                 />
-                <div className="absolute top-4 left-4 bg-green-500 text-white px-2 py-1.5 rounded-md text-sm font-semibold shadow-lg flex items-center gap-1.5">
+                <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg flex items-center gap-1.5">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
                   </svg>
@@ -216,8 +234,11 @@ export function ImageModal({
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
                   <button 
                     onClick={() => handleDownload(image.generation_record!.removed_bg_url!, `${projectName}_${imageIndex + 1}_BG_Removed.png`)}
-                    className="px-4 py-2 bg-background border border-border rounded-md hover:bg-muted transition-colors"
+                    className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
                   >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
                     Download PNG
                   </button>
                 </div>

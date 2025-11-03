@@ -59,65 +59,99 @@ export function ResultCard({
   
   // Determine badge status based on processing state
   const getBadgeStatus = (): BadgeStatus => {
-    // Check if face swap is complete (4K Ready)
-    if (isProfessionalOrEnterprise && image.face_swap_status === 'completed' && image.face_swap_image_url) {
-      return '4k-ready';
+    // PROFESSIONAL/ENTERPRISE TIER LOGIC
+    if (isProfessionalOrEnterprise) {
+      // Priority 1: Check if face swap is complete (Final State)
+      if (image.face_swap_status === 'completed' && image.face_swap_image_url) {
+        return '4k-ready';
+      }
+      
+      // Priority 2: Check if face swap is processing (Finalizing)
+      if (image.face_swap_status === 'processing') {
+        return 'finalizing';
+      }
+      
+      // Priority 3: Check if enhanced upscale (4K) is complete (4K Ready)
+      if (image.upscale_status === 'completed' && image.upscaled_image_url) {
+        return '4k-ready';
+      }
+      
+      // Priority 4: Check if enhanced upscale is processing (4K Processing)
+      if (image.upscale_status === 'processing') {
+        return '4k-processing';
+      }
+      
+      // CRITICAL FIX: If 2K is complete but 4K hasn't started yet, show "4K Processing"
+      // This covers the case where 2K is done but 4K is still 'pending' or hasn't started
+      if (image.basic_upscale_status === 'completed' && image.basic_upscale_url) {
+        // 2K is ready, but we're waiting for 4K
+        // Show "4K Processing" instead of "2K Ready" for Pro/Enterprise
+        return '4k-processing';
+      }
+      
+      // Default: Still processing (try-on or initial 2K)
+      return 'processing';
     }
     
-    // Check if enhanced upscale (4K) is complete without face swap (4K Ready)
-    if (isProfessionalOrEnterprise && image.upscale_status === 'completed' && image.upscaled_image_url) {
-      return '4k-ready';
-    }
-    
-    // Check if face swap is processing (Finalizing)
-    if (isProfessionalOrEnterprise && image.face_swap_status === 'processing') {
-      return 'finalizing';
-    }
-    
-    // Check if enhanced upscale is processing (4K Processing)
-    if (isProfessionalOrEnterprise && image.upscale_status === 'processing') {
-      return '4k-processing';
-    }
-    
-    // Check if basic upscale is complete (2K Ready)
+    // FREE/CREATOR TIER LOGIC
+    // Check if basic upscale is complete (2K Ready - Final State)
     if (image.basic_upscale_status === 'completed' && image.basic_upscale_url) {
       return '2k-ready';
     }
     
-    // Default to processing
+    // Default to processing (try-on or 2K in progress)
     return 'processing';
   };
 
   // Determine display URL based on what's available
   const getDisplayUrl = (): string => {
-    // Priority order for display:
-    // 1. Face swap (if available)
-    // 2. Enhanced upscale 4K (if available)
-    // 3. Basic upscale 2K (if available and NOT Pro/Enterprise)
-    // 4. Original try-on result
-    // 5. Clothing image (ONLY if no results at all yet)
+    // Display logic based on tier:
+    // 
+    // FREE/CREATOR (Pipeline: Try-On → 2K):
+    // - Show clothing image until 2K upscale completes
+    // - Then show 2K upscale result
+    // 
+    // PROFESSIONAL/ENTERPRISE (Pipeline: Try-On → 2K → 4K → Face Swap):
+    // - Show clothing image until try-on completes
+    // - Show try-on while 2K is processing
+    // - Show 2K IMMEDIATELY when ready (even if 4K is still processing)
+    // - Show 4K upscale when ready (even if face swap is still processing)
+    // - Show face swap when complete
     
-    // Show clothing image ONLY during initial processing when we have NO results yet
-    const hasAnyResult = image.basic_upscale_url || image.upscaled_image_url || image.face_swap_image_url || image.image_url;
-    if (!hasAnyResult && clothingImageUrl) {
-      return clothingImageUrl;
-    }
-    
-    // For professional/enterprise, show best available (fallback chain)
-    // SKIP basic_upscale_url (2K) for Pro/Enterprise - they go Try-On → 4K → Face Swap
     if (isProfessionalOrEnterprise) {
-      return image.face_swap_image_url || 
-             image.upscaled_image_url || 
-             image.image_url ||  // Use try-on image, NOT 2K
+      // CRITICAL FIX: Show best available image at all times
+      // Priority: Face Swap → 4K Upscale → 2K Upscale → Try-On → Clothing
+      
+      if (image.face_swap_image_url) {
+        return image.face_swap_image_url;
+      }
+      
+      if (image.upscaled_image_url) {
+        return image.upscaled_image_url;
+      }
+      
+      if (image.basic_upscale_url) {
+        // Show 2K immediately when available (even if 4K is processing)
+        return image.basic_upscale_url;
+      }
+      
+      if (image.image_url) {
+        return image.image_url;
+      }
+      
+      return clothingImageUrl || '';
+    } else {
+      // Free/Creator: Show clothing until 2K upscale completes
+      if (!image.basic_upscale_url && clothingImageUrl) {
+        return clothingImageUrl;
+      }
+      
+      // Then show: 2K Upscale → Try-On → Clothing
+      return image.basic_upscale_url || 
+             image.image_url || 
              clothingImageUrl || 
              '';
     }
-    
-    // For free/creator, show basic upscale or original
-    return image.basic_upscale_url || 
-           image.image_url || 
-           clothingImageUrl || 
-           '';
   };
 
   const badgeStatus = getBadgeStatus();
@@ -138,8 +172,32 @@ export function ResultCard({
   };
 
   // Remove BG button state
-  const showRemoveBgButton = !hasBgRemoved && userTier !== 'free';
-  const removeBgDisabled = isRemovingBg || badgeStatus === 'processing';
+  const showRemoveBgButton = userTier !== 'free'; // Always show for paid tiers
+  
+  // Determine if Remove BG button should be disabled
+  const getRemoveBgDisabled = (): boolean => {
+    // Disable if already processed
+    if (hasBgRemoved) return true;
+    
+    // Disable while processing
+    if (isRemovingBg) return true;
+    
+    if (isProfessionalOrEnterprise) {
+      // Professional/Enterprise: Wait for 4K image (face_swap or upscaled_image)
+      // Enable if any 4K image is available OR at least 2K is ready
+      const has4K = (image.face_swap_status === 'completed' && image.face_swap_image_url) ||
+                    (image.upscale_status === 'completed' && image.upscaled_image_url);
+      const has2K = image.basic_upscale_status === 'completed' && image.basic_upscale_url;
+      
+      // Enable if we have 4K OR at least 2K (fallback)
+      return !(has4K || has2K);
+    } else {
+      // Free/Creator: Enable when 2K is ready
+      return !(image.basic_upscale_status === 'completed' && image.basic_upscale_url);
+    }
+  };
+
+  const removeBgDisabled = getRemoveBgDisabled();
 
   return (
     <div className={`group bg-background rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 ${isSelected ? 'ring-2 ring-primary scale-[1.02]' : ''} ${className}`}>
@@ -201,47 +259,47 @@ export function ResultCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onRemoveBackground();
+                if (!removeBgDisabled && !hasBgRemoved) {
+                  onRemoveBackground();
+                }
               }}
               disabled={removeBgDisabled}
               className={`
                 flex-1 px-3 py-2 
-                bg-muted/30 
-                border border-dashed border-border 
                 rounded-md 
                 text-sm font-medium 
-                text-muted-foreground 
-                transition-colors 
-                flex items-center justify-center
+                transition-all duration-200
+                flex items-center justify-center gap-1.5
                 ${removeBgDisabled 
-                  ? 'opacity-50 cursor-not-allowed' 
-                  : 'hover:border-amber-500 hover:text-amber-600'
+                  ? hasBgRemoved
+                    ? 'bg-green-500/10 border border-green-500 text-green-600 cursor-default'
+                    : 'bg-muted/50 border border-border text-muted-foreground opacity-50 cursor-not-allowed'
+                  : 'bg-white border border-border text-foreground hover:bg-muted hover:border-muted-foreground'
                 }
               `}
             >
               {isRemovingBg ? (
                 <>
-                  <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                   </svg>
                   Processing...
                 </>
+              ) : hasBgRemoved ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
+                  </svg>
+                  BG Removed
+                </>
               ) : (
-                'Remove BG'
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+                  </svg>
+                  Remove BG
+                </>
               )}
-            </button>
-          )}
-          
-          {/* BG Removed Button (shows after BG removal complete) */}
-          {hasBgRemoved && (
-            <button
-              className="flex-1 px-3 py-2 bg-green-50 border border-green-500 text-green-600 rounded-md text-sm font-medium flex items-center justify-center gap-1"
-              disabled
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
-              </svg>
-              BG Removed
             </button>
           )}
         </div>

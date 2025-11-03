@@ -93,7 +93,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.log("✅ Free tier subscription created");
     }
 
-    // 5. Optionally: Delete all user generations (commented out by default)
+    // 5. Reset shopify_users metadata to free tier
+    const { error: metadataError } = await supabaseAdmin
+      .from("shopify_users")
+      .update({
+        metadata: {
+          subscriptionTier: "free",
+          subscriptionStatus: "active",
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("trayve_user_id", userId);
+
+    if (metadataError) {
+      console.error("❌ Error updating metadata:", metadataError);
+    } else {
+      console.log("✅ Shopify user metadata reset to free tier");
+    }
+
+    // 6. Optionally: Delete all user generations (commented out by default)
     // Uncomment if you want to also clear project history
     /*
     const { error: generationsError } = await supabaseAdmin

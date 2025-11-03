@@ -66,6 +66,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         supabase_path,
         generation_tier,
         generation_metadata,
+        removed_bg_url,
         created_at,
         poses:pose_id (
           id,
@@ -90,14 +91,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       const metadata = result.generation_metadata || {};
       const tier = result.generation_tier || 'free';
       
-      // Debug: Log what's in the database
+      // Debug: Log ACTUAL database values (full JSON)
       console.log(`🔍 Debug Result ${result.id}:`);
+      console.log(`   - RAW generation_metadata:`, JSON.stringify(metadata, null, 2));
       console.log(`   - result_image_url: ${result.result_image_url ? 'EXISTS' : 'NULL'}`);
+      console.log(`   - removed_bg_url: ${result.removed_bg_url ? 'EXISTS ✂️' : 'NULL'}`);
       console.log(`   - metadata.basic_upscale_url: ${metadata.basic_upscale_url ? 'EXISTS' : 'NULL'}`);
       console.log(`   - metadata.basic_upscale_status: ${metadata.basic_upscale_status || 'NULL'}`);
+      console.log(`   - metadata.upscaled_image_url: ${metadata.upscaled_image_url ? 'EXISTS' : 'NULL'}`);
+      console.log(`   - metadata.upscale_status: ${metadata.upscale_status || 'NULL'}`);
+      console.log(`   - metadata.face_swap_image_url: ${metadata.face_swap_image_url ? 'EXISTS' : 'NULL'}`);
+      console.log(`   - metadata.face_swap_status: ${metadata.face_swap_status || 'NULL'}`);
       console.log(`   - metadata.status: ${metadata.status || 'NULL'}`);
+      console.log(`   - generation_tier: ${tier}`);
       
       // Define which features are available for each tier
+      // Free/Creator: Try-On → 2K Upscale
+      // Professional/Enterprise: Try-On → 2K Upscale → 4K Upscale → Face Swap
       const tierFeatures = {
         free: { basicUpscale: true, enhancedUpscale: false, faceSwap: false },
         creator: { basicUpscale: true, enhancedUpscale: false, faceSwap: false },
@@ -107,26 +117,49 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       
       const features = tierFeatures[tier as keyof typeof tierFeatures] || tierFeatures.free;
       
+      const formattedImage = {
+        id: result.id,
+        // For Pro/Enterprise: Try-On URL is the base, for Free/Creator: result_image_url
+        image_url: metadata.tryon_url || result.result_image_url || '',
+        // Only show basic upscale for tiers that have it enabled
+        basic_upscale_url: features.basicUpscale && metadata.basic_upscale_url ? metadata.basic_upscale_url : undefined,
+        basic_upscale_status: features.basicUpscale ? (metadata.basic_upscale_status || 'pending') : 'not_available',
+        // Only show enhanced upscale for professional/enterprise
+        upscaled_image_url: features.enhancedUpscale && metadata.upscaled_image_url ? metadata.upscaled_image_url : undefined,
+        upscale_status: features.enhancedUpscale ? (metadata.upscale_status || 'pending') : 'not_available',
+        // Only show face swap for professional/enterprise
+        face_swap_image_url: features.faceSwap && metadata.face_swap_image_url ? metadata.face_swap_image_url : undefined,
+        face_swap_status: features.faceSwap ? (metadata.face_swap_status || 'pending') : 'not_available',
+        // Background removal (from dedicated column, not metadata)
+        generation_record: {
+          removed_bg_url: result.removed_bg_url || ''
+        },
+        created_at: result.created_at
+      };
+      
+      // Debug: Log what we're sending to frontend
+      console.log(`📤 Sending to frontend for result ${result.id}:`);
+      console.log(`   - basic_upscale_url: ${formattedImage.basic_upscale_url ? 'SET' : 'EMPTY'}`);
+      console.log(`   - basic_upscale_status: ${formattedImage.basic_upscale_status}`);
+      console.log(`   - upscaled_image_url: ${formattedImage.upscaled_image_url ? 'SET' : 'EMPTY'}`);
+      console.log(`   - upscale_status: ${formattedImage.upscale_status}`);
+      console.log(`   - face_swap_image_url: ${formattedImage.face_swap_image_url ? 'SET' : 'EMPTY'}`);
+      console.log(`   - face_swap_status: ${formattedImage.face_swap_status}`);
+      console.log(`   - removed_bg_url: ${formattedImage.generation_record.removed_bg_url ? 'SET ✂️' : 'EMPTY'}`);
+      if (formattedImage.upscaled_image_url) {
+        console.log(`   - ACTUAL upscaled_image_url: ${formattedImage.upscaled_image_url.substring(0, 100)}...`);
+      }
+      if (formattedImage.face_swap_image_url) {
+        console.log(`   - ACTUAL face_swap_image_url: ${formattedImage.face_swap_image_url.substring(0, 100)}...`);
+      }
+      if (formattedImage.generation_record.removed_bg_url) {
+        console.log(`   - ACTUAL removed_bg_url: ${formattedImage.generation_record.removed_bg_url.substring(0, 100)}...`);
+      }
+      
       return {
         pose_id: result.pose_id,
         pose_name: result.pose_name || result.poses?.name || 'Unknown Pose',
-        images: [{
-          id: result.id,
-          image_url: result.result_image_url || '',
-          // Only show basic upscale for all tiers (always available)
-          basic_upscale_url: metadata.basic_upscale_url || '',
-          basic_upscale_status: features.basicUpscale ? (metadata.basic_upscale_status || 'pending') : 'not_available',
-          // Only show enhanced upscale for professional/enterprise
-          upscaled_image_url: features.enhancedUpscale ? (metadata.upscaled_image_url || '') : '',
-          upscale_status: features.enhancedUpscale ? (metadata.upscale_status || 'pending') : 'not_available',
-          // Only show face swap for professional/enterprise
-          face_swap_image_url: features.faceSwap ? (metadata.face_swap_image_url || '') : '',
-          face_swap_status: features.faceSwap ? (metadata.face_swap_status || 'pending') : 'not_available',
-          generation_record: {
-            removed_bg_url: metadata.removed_bg_url || ''
-          },
-          created_at: result.created_at
-        }]
+        images: [formattedImage]
       };
     });
 

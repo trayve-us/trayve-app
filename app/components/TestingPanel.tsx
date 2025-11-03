@@ -21,11 +21,13 @@ interface ResetResponse {
 
 export function TestingPanel({ currentCredits }: TestingPanelProps) {
   const fetcher = useFetcher<ResetResponse>();
+  const tierFetcher = useFetcher();
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState({ title: "", description: "" });
 
   const isResetting = fetcher.state === "submitting" || fetcher.state === "loading";
+  const isSettingTier = tierFetcher.state === "submitting" || tierFetcher.state === "loading";
 
   // Handle reset confirmation
   const handleResetConfirm = () => {
@@ -37,6 +39,17 @@ export function TestingPanel({ currentCredits }: TestingPanelProps) {
       }
     );
     setConfirmDialogOpen(false);
+  };
+
+  // Handle tier change
+  const handleSetTier = (tier: string) => {
+    tierFetcher.submit(
+      { tier },
+      {
+        method: "POST",
+        action: "/api/testing/set-tier",
+      }
+    );
   };
 
   // Show success/error alert after reset
@@ -136,6 +149,40 @@ export function TestingPanel({ currentCredits }: TestingPanelProps) {
         >
           Resets credits to 0, clears subscriptions, sets to true free tier
         </p>
+
+        {/* Quick Tier Switcher */}
+        <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #FCD34D" }}>
+          <p style={{ fontSize: "11px", fontWeight: "600", color: "#92400E", marginBottom: "6px" }}>
+            Quick Tier Switch:
+          </p>
+          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+            {["free", "creator", "professional", "enterprise"].map((tier) => (
+              <button
+                key={tier}
+                onClick={() => handleSetTier(tier)}
+                disabled={isSettingTier}
+                style={{
+                  flex: "1 1 auto",
+                  padding: "6px 8px",
+                  fontSize: "10px",
+                  fontWeight: "600",
+                  backgroundColor: "#FFFFFF",
+                  border: "1px solid #F59E0B",
+                  borderRadius: "4px",
+                  color: "#D97706",
+                  cursor: isSettingTier ? "not-allowed" : "pointer",
+                  opacity: isSettingTier ? 0.5 : 1,
+                  textTransform: "capitalize",
+                }}
+              >
+                {tier}
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: "9px", color: "#78350F", marginTop: "4px" }}>
+            Sets tier + gives 1000 credits (except free)
+          </p>
+        </div>
       </div>
 
       {/* Confirmation Dialog */}

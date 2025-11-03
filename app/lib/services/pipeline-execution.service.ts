@@ -28,6 +28,10 @@ import {
   type UploadResult,
 } from "./storage.service";
 
+// =============================================
+// TYPES
+// =============================================
+
 // Types
 export interface PoseInput {
   pose_id: string;
@@ -67,6 +71,110 @@ export interface GenerationResult {
   };
   error?: string;
 }
+
+// =============================================
+// HELPER FUNCTIONS
+// =============================================
+
+/**
+ * Update generation result metadata in database
+ * Saves intermediate pipeline progress for real-time UI updates
+ */
+async function updateGenerationMetadata(
+  resultId: string,
+  pipelineResults: PipelineStepResult[],
+  finalImageUrl?: string,
+  storagePath?: string
+): Promise<void> {
+  try {
+    console.log(`💾 Updating metadata for result ${resultId}...`);
+    console.log(`   Pipeline results count: ${pipelineResults.length}`);
+    console.log(`   Final image URL: ${finalImageUrl ? 'PROVIDED' : 'NONE'}`);
+    
+    // Build metadata from pipeline results
+    const metadata: any = {
+      status: finalImageUrl ? 'completed' : 'processing',
+      updated_at: new Date().toISOString(),
+    };
+
+    if (finalImageUrl) {
+      metadata.completed_at = new Date().toISOString();
+    }
+
+    pipelineResults.forEach((step) => {
+      console.log(`   Processing step: ${step.stepType} - status: ${step.status}`);
+      
+      if (step.stepType === 'tryon') {
+        metadata.tryon_status = step.status;
+        if (step.status === 'completed' && step.imageUrl) {
+          metadata.tryon_url = String(step.imageUrl);
+          console.log(`     ✅ Set tryon_url: ${String(step.imageUrl).substring(0, 60)}...`);
+        } else if (step.status === 'failed') {
+          metadata.tryon_error = step.error || 'Unknown error';
+        }
+      } else if (step.stepType === 'basic-upscale') {
+        metadata.basic_upscale_status = step.status;
+        if (step.status === 'completed' && step.imageUrl) {
+          metadata.basic_upscale_url = String(step.imageUrl);
+          console.log(`     ✅ Set basic_upscale_url: ${String(step.imageUrl).substring(0, 60)}...`);
+        } else if (step.status === 'failed') {
+          metadata.basic_upscale_error = step.error || 'Unknown error';
+        }
+      } else if (step.stepType === 'enhanced-upscale') {
+        metadata.upscale_status = step.status;
+        if (step.status === 'completed' && step.imageUrl) {
+          metadata.upscaled_image_url = String(step.imageUrl);
+          console.log(`     ✅ Set upscaled_image_url: ${String(step.imageUrl).substring(0, 60)}...`);
+        } else if (step.status === 'failed') {
+          metadata.upscale_error = step.error || 'Unknown error';
+        }
+      } else if (step.stepType === 'replicate-face-swap') {
+        metadata.face_swap_status = step.status;
+        if (step.status === 'completed' && step.imageUrl) {
+          metadata.face_swap_image_url = String(step.imageUrl);
+          console.log(`     ✅ Set face_swap_image_url: ${String(step.imageUrl).substring(0, 60)}...`);
+        } else if (step.status === 'failed') {
+          metadata.face_swap_error = step.error || 'Unknown error';
+        }
+      }
+    });
+
+    console.log(`   Metadata to save:`, JSON.stringify(metadata, null, 2));
+    console.log(`   Metadata keys: ${Object.keys(metadata).join(', ')}`);
+    console.log(`   Metadata size: ${JSON.stringify(metadata).length} bytes`);
+
+    // Use UPDATE instead of UPSERT to avoid issues with partial field updates
+    const { data: updateResult, error } = await supabaseAdmin
+      .from("generation_results")
+      .update({
+        generation_metadata: metadata,
+        ...(finalImageUrl && { result_image_url: finalImageUrl }),
+        ...(storagePath && { supabase_path: storagePath }),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', resultId)
+      .select();
+
+    if (error) {
+      console.error(`❌ Failed to update metadata:`, error);
+      throw error;
+    }
+
+    if (!updateResult || updateResult.length === 0) {
+      console.error(`❌ No rows updated for result ${resultId}`);
+      throw new Error(`Failed to update generation result ${resultId} - no rows affected`);
+    }
+
+    console.log(`✅ Metadata updated successfully (${updateResult.length} row(s) affected)`);
+  } catch (error) {
+    console.error(`❌ Error in updateGenerationMetadata:`, error);
+    throw error;
+  }
+}
+
+// =============================================
+// MAIN EXECUTION FUNCTION
+// =============================================
 
 /**
  * Start a new pipeline execution
@@ -435,7 +543,8 @@ async function processAllPoses(
         clothing_image_url,
         {
           tier: subscription_tier as any,
-        }
+        },
+        execution_id  // Pass execution ID for storage path
       );
 
       const poseProcessingTime = ((Date.now() - poseStartTime) / 1000).toFixed(2);
@@ -448,8 +557,19 @@ async function processAllPoses(
         if (step.processingTime) {
           console.log(`      Time: ${(step.processingTime / 1000).toFixed(2)}s`);
         }
+        if (step.imageUrl) {
+          console.log(`      Image URL: ${step.imageUrl.substring(0, 100)}...`);
+        }
       });
       console.log('───────────────────────────────────────────────────────');
+
+      // ✅ UPDATE DATABASE AFTER PIPELINE COMPLETES
+      // This saves all step results immediately so UI can show them
+      console.log('🔄 About to save metadata to database...');
+      console.log(`   Result ID: ${generationResult.id}`);
+      console.log(`   Pipeline Results Count: ${pipelineResults.length}`);
+      await updateGenerationMetadata(generationResult.id, pipelineResults);
+      console.log('✅ Intermediate metadata saved to database');
 
       // Check if CRITICAL steps failed (try-on is critical, upscales are optional)
       const failedTryOn = pipelineResults.find((r) => r.stepType === 'tryon' && r.status === 'failed');
@@ -507,96 +627,11 @@ async function processAllPoses(
       console.log(`   Public URL: ${finalImageUrl.substring(0, 80)}...`);
       console.log('───────────────────────────────────────────────────────');
 
-      // Build step results metadata with URLs AND statuses
-      const metadata: any = {
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-      };
-
-      pipelineResults.forEach((step) => {
-        // Set status fields based on step type
-        if (step.stepType === 'basic-upscale') {
-          metadata.basic_upscale_status = step.status;
-          if (step.status === 'completed' && step.imageUrl) {
-            metadata.basic_upscale_url = step.imageUrl;
-          } else if (step.status === 'failed') {
-            metadata.basic_upscale_error = step.error || 'Unknown error';
-          }
-        } else if (step.stepType === 'enhanced-upscale') {
-          metadata.upscale_status = step.status;
-          if (step.status === 'completed' && step.imageUrl) {
-            metadata.upscaled_image_url = step.imageUrl;
-          } else if (step.status === 'failed') {
-            metadata.upscale_error = step.error || 'Unknown error';
-          }
-        } else if (step.stepType === 'replicate-face-swap') {
-          metadata.face_swap_status = step.status;
-          if (step.status === 'completed' && step.imageUrl) {
-            metadata.face_swap_image_url = step.imageUrl;
-          } else if (step.status === 'failed') {
-            metadata.face_swap_error = step.error || 'Unknown error';
-          }
-        } else if (step.stepType === 'tryon') {
-          metadata.tryon_status = step.status;
-          if (step.status === 'completed' && step.imageUrl) {
-            metadata.tryon_url = step.imageUrl;
-          } else if (step.status === 'failed') {
-            metadata.tryon_error = step.error || 'Unknown error';
-          }
-        }
-      });
-
-      // Update generation result with all step results
-      console.log('💾 Updating database with results...');
-      console.log(`   Result ID: ${generationResult.id}`);
-      console.log(`   Final Image URL: ${finalImageUrl.substring(0, 80)}...`);
-      console.log(`   Metadata Status Fields:`);
-      console.log(`     - upscale_status: ${metadata.upscale_status || 'N/A'}`);
-      console.log(`     - face_swap_status: ${metadata.face_swap_status || 'N/A'}`);
-      console.log(`   Metadata size: ${JSON.stringify(metadata).length} bytes`);
-      
-      // Retry logic for database timeout issues
-      let updateAttempt = 0;
-      const maxRetries = 3;
-      let updateError: any = null;
-      
-      while (updateAttempt < maxRetries) {
-        updateAttempt++;
-        console.log(`   Attempt ${updateAttempt}/${maxRetries}...`);
-        
-        const { error } = await supabaseAdmin
-          .from("generation_results")
-          .update({
-            result_image_url: finalImageUrl,
-            supabase_path: uploadResult.path,
-            generation_metadata: metadata,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", generationResult.id);
-        
-        if (!error) {
-          updateError = null;
-          break;
-        }
-        
-        updateError = error;
-        
-        if (error.code === '57014') {
-          // Statement timeout - wait and retry
-          console.warn(`   ⚠️  Database timeout on attempt ${updateAttempt}, retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 1000 * updateAttempt));
-        } else {
-          // Other error - don't retry
-          break;
-        }
-      }
-
-      if (updateError) {
-        console.error(`❌ Error updating generation result ${generationResult.id} after ${updateAttempt} attempts:`, updateError);
-        throw updateError;
-      }
-
-      console.log(`✅ Database updated successfully`);
+      // ✅ UPDATE DATABASE WITH FINAL RESULT
+      // This updates the metadata with the final image URL and marks as completed
+      console.log('💾 Updating database with final results...');
+      await updateGenerationMetadata(generationResult.id, pipelineResults, finalImageUrl, uploadResult.path);
+      console.log('✅ Database updated successfully');
       
       // Print real-time results summary
       console.log('');
@@ -614,7 +649,12 @@ async function processAllPoses(
       console.log(`      - Base (Try-On): ${baseStatus}`);
       
       if (isProfessionalOrEnterprise) {
-        // Professional/Enterprise: Show 4K Upscale and Face Swap
+        // Professional/Enterprise: Show 2K Upscale, 4K Upscale, and Face Swap
+        const basicUpscaleStep = pipelineResults.find(r => r.stepType === 'basic-upscale');
+        const upscale2KStatus = basicUpscaleStep?.status === 'completed' ? '✅' : 
+                                basicUpscaleStep?.status === 'failed' ? '❌' : 'pending';
+        console.log(`      - 2K Upscale: ${upscale2KStatus}`);
+        
         const enhancedUpscaleStep = pipelineResults.find(r => r.stepType === 'enhanced-upscale');
         const upscale4KStatus = enhancedUpscaleStep?.status === 'completed' ? '✅' : 
                                 enhancedUpscaleStep?.status === 'failed' ? '❌' : 'pending';
@@ -625,7 +665,7 @@ async function processAllPoses(
                               faceSwapStep?.status === 'failed' ? '❌' : 'pending';
         console.log(`      - Face Swap: ${faceSwapStatus}`);
       } else {
-        // Free/Starter/Creator: Show 2K Upscale only
+        // Free/Creator: Show 2K Upscale only
         const basicUpscaleStep = pipelineResults.find(r => r.stepType === 'basic-upscale');
         const upscale2KStatus = basicUpscaleStep?.status === 'completed' ? '✅' : 
                                 basicUpscaleStep?.status === 'failed' ? '❌' : 'pending';

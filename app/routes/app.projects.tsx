@@ -23,7 +23,14 @@ interface GenerationResult {
   created_at: string;
   image_url?: string;
   basic_upscale_url?: string;
+  basic_upscale_status?: string;
   upscaled_image_url?: string;
+  upscale_status?: string;
+  face_swap_image_url?: string;
+  face_swap_status?: string;
+  generation_record?: {
+    removed_bg_url?: string;
+  };
 }
 
 interface Project {
@@ -74,7 +81,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         (projectsData || []).map(async (project: any) => {
           const { data: results, error: resultsError } = await supabaseAdmin
             .from('generation_results')
-            .select('id, pose_id, pose_name, result_image_url, generation_metadata, created_at')
+            .select('id, pose_id, pose_name, result_image_url, generation_metadata, created_at, removed_bg_url')
             .eq('project_id', project.id)
             .order('created_at', { ascending: false });
 
@@ -100,6 +107,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         projects = (data || []).map((project: any) => {
           const results = (project.generation_results || []).map((result: any) => {
             const metadata = result.generation_metadata || {};
+            
             return {
               id: result.id,
               pose_id: result.pose_id,
@@ -107,9 +115,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               result_image_url: result.result_image_url || '',
               sample_index: 0,
               created_at: result.created_at,
-              image_url: result.result_image_url,
+              // Use try-on URL if available, otherwise result_image_url
+              image_url: metadata.tryon_url || result.result_image_url || '',
+              // 2K upscale (Free/Creator only)
               basic_upscale_url: metadata.basic_upscale_url || '',
-              upscaled_image_url: metadata.upscaled_image_url || metadata.face_swap_image_url || '',
+              basic_upscale_status: metadata.basic_upscale_status || 'pending',
+              // 4K upscale (Professional/Enterprise only)
+              upscaled_image_url: metadata.upscaled_image_url || '',
+              upscale_status: metadata.upscale_status || 'pending',
+              // Face swap (Professional/Enterprise only)
+              face_swap_image_url: metadata.face_swap_image_url || '',
+              face_swap_status: metadata.face_swap_status || 'pending',
+              // Background removal (from dedicated column, not metadata)
+              generation_record: {
+                removed_bg_url: result.removed_bg_url || ''
+              }
             };
           });
 
@@ -132,6 +152,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         console.log(`📊 Projects summary:`);
         projects.forEach((project, idx) => {
           console.log(`  ${idx + 1}. ${project.title} - ${project.result_count} results`);
+          // Debug: Show BG removal status
+          project.generation_results.forEach((result, resultIdx) => {
+            if (result.generation_record?.removed_bg_url) {
+              console.log(`    ✂️ Result ${resultIdx + 1} has BG removed: ${result.generation_record.removed_bg_url.substring(0, 50)}...`);
+            }
+          });
         });
       }
     } catch (error) {
@@ -208,11 +234,17 @@ export default function Projects() {
     ) {
       const latestResult = project.generation_results[0];
       
-      // Priority: basic_upscale_url > image_url > result_image_url > upscaled_image_url
+      // Priority for cover image:
+      // 1. Face swap (highest quality if available)
+      // 2. 4K upscale (Professional/Enterprise)
+      // 3. 2K upscale (Free/Creator)
+      // 4. Try-on base image
+      // 5. Fallback to result_image_url
+      if (latestResult.face_swap_image_url) return latestResult.face_swap_image_url;
+      if (latestResult.upscaled_image_url) return latestResult.upscaled_image_url;
       if (latestResult.basic_upscale_url) return latestResult.basic_upscale_url;
       if (latestResult.image_url) return latestResult.image_url;
       if (latestResult.result_image_url) return latestResult.result_image_url;
-      if (latestResult.upscaled_image_url) return latestResult.upscaled_image_url;
     }
 
     // Fallback to clothing image

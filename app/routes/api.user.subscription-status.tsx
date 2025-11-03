@@ -23,24 +23,35 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const user_id = user.trayve_user_id;
 
-    // Fetch user data
-    const { data: userData, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('id, credits_balance, subscription_tier')
-      .eq('id', user_id)
+    // Fetch Shopify user data with metadata
+    const { data: shopifyUser, error: shopifyUserError } = await supabaseAdmin
+      .from('shopify_users')
+      .select('trayve_user_id, metadata')
+      .eq('trayve_user_id', user_id)
       .single();
 
-    if (userError || !userData) {
+    if (shopifyUserError || !shopifyUser) {
       return json({ 
         success: false, 
         error: 'User not found' 
       }, { status: 404 });
     }
 
+    // Extract subscription tier from metadata
+    const metadata = shopifyUser.metadata as any;
+    const subscriptionTier = metadata?.subscriptionTier || 'free';
+
+    // Fetch credits balance
+    const { data: creditsData } = await supabaseAdmin
+      .from('user_credits')
+      .select('available_credits')
+      .eq('user_id', user_id)
+      .single();
+
     return json({
       success: true,
-      tier: userData.subscription_tier || 'free',
-      credits_balance: userData.credits_balance || 0
+      tier: subscriptionTier,
+      credits_balance: creditsData?.available_credits || 0
     });
 
   } catch (error: any) {
