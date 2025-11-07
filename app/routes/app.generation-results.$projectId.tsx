@@ -7,6 +7,7 @@ import {
   ImageModal,
   EditProjectNameModal
 } from '~/components/results';
+import { useToast } from '~/hooks/use-toast';
 import JSZip from 'jszip';
 
 // ================================================================================
@@ -55,6 +56,7 @@ export default function GenerationResultsRevamped() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { toast } = useToast();
 
   // ============================================================================
   // STATE MANAGEMENT
@@ -396,6 +398,23 @@ export default function GenerationResultsRevamped() {
   }, [fetchResults]);
 
   // ============================================================================
+  // UPGRADE HANDLER FOR FREE USERS
+  // ============================================================================
+
+  const handleUpgradeClick = useCallback(() => {
+    toast({
+      title: "Upgrade Required",
+      description: "Please upgrade to any paid plan to use the background removal feature.",
+      variant: "default",
+    });
+    
+    // Redirect to pricing page after a short delay
+    setTimeout(() => {
+      navigate('/app/pricing');
+    }, 1500);
+  }, [navigate, toast]);
+
+  // ============================================================================
   // NAVIGATION HANDLERS
   // ============================================================================
 
@@ -609,6 +628,7 @@ export default function GenerationResultsRevamped() {
                 onImageClick={() => handleImageClick(image, index)}
                 onDownload={() => handleDownloadImage(image, index)}
                 onRemoveBackground={() => handleRemoveBackground(image)}
+                onUpgradeClick={handleUpgradeClick}
                 isRemovingBg={removingBgForImage === image.id}
                 selectionMode={selectionMode}
                 isSelected={selectedImages.has(image.id)}

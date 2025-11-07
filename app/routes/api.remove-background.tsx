@@ -172,13 +172,13 @@ export async function action({ request }: ActionFunctionArgs) {
             image: sourceUrl
           }
         }
-      ) as string;
+      );
 
       const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`✅ Background removal completed in ${totalTime}s`);
       
       // Extract image URL from result - Replicate returns output as string
-      removedBgUrl = output.toString();
+      removedBgUrl = typeof output === 'string' ? output : String(output);
       
       if (!removedBgUrl) {
         console.error('❌ No image URL in Replicate response');

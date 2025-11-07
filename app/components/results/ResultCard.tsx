@@ -22,6 +22,7 @@ interface ResultCardProps {
   onImageClick: () => void;
   onDownload: () => void;
   onRemoveBackground: () => void;
+  onUpgradeClick?: () => void;
   isRemovingBg?: boolean;
   isSelected?: boolean;
   onSelectionChange?: (selected: boolean) => void;
@@ -46,6 +47,7 @@ export function ResultCard({
   onImageClick,
   onDownload,
   onRemoveBackground,
+  onUpgradeClick,
   isRemovingBg = false,
   isSelected = false,
   onSelectionChange,
@@ -61,7 +63,7 @@ export function ResultCard({
   const getBadgeStatus = (): BadgeStatus => {
     // PROFESSIONAL/ENTERPRISE TIER LOGIC
     if (isProfessionalOrEnterprise) {
-      // Priority 1: Check if face swap is complete (Final State)
+      // Priority 1: Check if face swap is complete (Final State - 4K Ready!)
       if (image.face_swap_status === 'completed' && image.face_swap_image_url) {
         return '4k-ready';
       }
@@ -71,9 +73,11 @@ export function ResultCard({
         return 'finalizing';
       }
       
-      // Priority 3: Check if enhanced upscale (4K) is complete (4K Ready)
+      // Priority 3: If 4K upscale is complete but face swap hasn't completed yet
+      // Show "4K Processing" because we're still waiting for face swap (final step)
       if (image.upscale_status === 'completed' && image.upscaled_image_url) {
-        return '4k-ready';
+        // Face swap hasn't completed yet, keep showing "4K Processing"
+        return '4k-processing';
       }
       
       // Priority 4: Check if enhanced upscale is processing (4K Processing)
@@ -81,11 +85,12 @@ export function ResultCard({
         return '4k-processing';
       }
       
-      // CRITICAL FIX: If 2K is complete but 4K hasn't started yet, show "4K Processing"
-      // This covers the case where 2K is done but 4K is still 'pending' or hasn't started
+      // ✨ CRITICAL: If 2K is complete but 4K hasn't started/completed yet, show "4K Processing"
+      // This allows users to see the 2K image while 4K is being generated
+      // Badge shows "4K Processing" to indicate enhancement is in progress
       if (image.basic_upscale_status === 'completed' && image.basic_upscale_url) {
-        // 2K is ready, but we're waiting for 4K
-        // Show "4K Processing" instead of "2K Ready" for Pro/Enterprise
+        // 2K is ready and displayed, but we're waiting for 4K
+        // Show "4K Processing" badge to indicate Pro/Enterprise enhancement is in progress
         return '4k-processing';
       }
       
@@ -114,24 +119,23 @@ export function ResultCard({
     // PROFESSIONAL/ENTERPRISE (Pipeline: Try-On → 2K → 4K → Face Swap):
     // - Show clothing image until try-on completes
     // - Show try-on while 2K is processing
-    // - Show 2K IMMEDIATELY when ready (even if 4K is still processing)
-    // - Show 4K upscale when ready (even if face swap is still processing)
-    // - Show face swap when complete
+    // - ✨ Show 2K IMMEDIATELY when ready (even if 4K is still processing) ✨
+    // - ⚠️ KEEP SHOWING 2K until face swap completes (don't show 4K until final step done)
+    // - Show face swap when complete (final result)
     
     if (isProfessionalOrEnterprise) {
-      // CRITICAL FIX: Show best available image at all times
-      // Priority: Face Swap → 4K Upscale → 2K Upscale → Try-On → Clothing
+      // ✨ PRIORITY ORDER: Face Swap (final) → 2K (while processing) → Try-On → Clothing
+      // NOTE: 4K image is skipped in display - we show 2K until face swap completes
       
-      if (image.face_swap_image_url) {
+      // Final step: Show face swap result (this includes the 4K quality)
+      if (image.face_swap_status === 'completed' && image.face_swap_image_url) {
         return image.face_swap_image_url;
       }
       
-      if (image.upscaled_image_url) {
-        return image.upscaled_image_url;
-      }
-      
+      // ✨ CRITICAL: Show 2K while 4K/Face Swap is processing
+      // Don't show 4K upscale image even if available - wait for face swap to complete
+      // This keeps the preview consistent and shows "4K Processing" badge
       if (image.basic_upscale_url) {
-        // Show 2K immediately when available (even if 4K is processing)
         return image.basic_upscale_url;
       }
       
@@ -171,8 +175,9 @@ export function ResultCard({
     return 'Download';
   };
 
-  // Remove BG button state
-  const showRemoveBgButton = userTier !== 'free'; // Always show for paid tiers
+  // Remove BG button state - now shown for all users including free
+  const showRemoveBgButton = true; // Always show for all tiers
+  const isFreeUser = userTier === 'free';
   
   // Determine if Remove BG button should be disabled
   const getRemoveBgDisabled = (): boolean => {
@@ -181,6 +186,9 @@ export function ResultCard({
     
     // Disable while processing
     if (isRemovingBg) return true;
+    
+    // Free users: never disable (they'll be prompted to upgrade)
+    if (isFreeUser) return false;
     
     if (isProfessionalOrEnterprise) {
       // Professional/Enterprise: Wait for 4K image (face_swap or upscaled_image)
@@ -192,7 +200,7 @@ export function ResultCard({
       // Enable if we have 4K OR at least 2K (fallback)
       return !(has4K || has2K);
     } else {
-      // Free/Creator: Enable when 2K is ready
+      // Creator: Enable when 2K is ready
       return !(image.basic_upscale_status === 'completed' && image.basic_upscale_url);
     }
   };
@@ -259,22 +267,32 @@ export function ResultCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                // Free users: redirect to pricing page
+                if (isFreeUser && !hasBgRemoved) {
+                  onUpgradeClick?.();
+                  return;
+                }
+                // Paid users: process background removal
                 if (!removeBgDisabled && !hasBgRemoved) {
                   onRemoveBackground();
                 }
               }}
-              disabled={removeBgDisabled}
+              disabled={removeBgDisabled && !isFreeUser}
               className={`
                 flex-1 px-3 py-2 
                 rounded-md 
                 text-sm font-medium 
                 transition-all duration-200
                 flex items-center justify-center gap-1.5
-                ${removeBgDisabled 
+                ${removeBgDisabled && !isFreeUser
                   ? hasBgRemoved
                     ? 'bg-green-500/10 border border-green-500 text-green-600 cursor-default'
                     : 'bg-muted/50 border border-border text-muted-foreground opacity-50 cursor-not-allowed'
-                  : 'bg-white border border-border text-foreground hover:bg-muted hover:border-muted-foreground'
+                  : isFreeUser && !hasBgRemoved
+                    ? 'bg-gradient-to-r from-purple-500 to-indigo-500 border-0 text-white hover:from-purple-600 hover:to-indigo-600 cursor-pointer'
+                    : hasBgRemoved
+                      ? 'bg-green-500/10 border border-green-500 text-green-600 cursor-default'
+                      : 'bg-white border border-border text-foreground hover:bg-muted hover:border-muted-foreground'
                 }
               `}
             >

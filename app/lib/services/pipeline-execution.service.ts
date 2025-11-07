@@ -536,6 +536,9 @@ async function processAllPoses(
       console.log(`🎨 Using pose-specific image URL (not first pose)`);
       console.log('───────────────────────────────────────────────────────');
 
+      // Track steps as they complete for real-time incremental updates
+      const stepResultsAccumulator: PipelineStepResult[] = [];
+
       // Execute pipeline for this pose
       console.log('🚀 Executing AI pipeline...');
       const pipelineResults: PipelineStepResult[] = await executePipeline(
@@ -543,6 +546,23 @@ async function processAllPoses(
         clothing_image_url,
         {
           tier: subscription_tier as any,
+          // NEW: Add callback to update metadata after each step completes
+          onStepComplete: async (step: PipelineStepResult) => {
+            console.log(`🔄 Step completed callback triggered: ${step.stepType} (${step.status})`);
+            
+            // Add this step to the accumulator
+            stepResultsAccumulator.push(step);
+            
+            // Update metadata immediately with accumulated steps
+            // This allows the UI to show 2K while 4K is processing
+            try {
+              await updateGenerationMetadata(generationResult.id, stepResultsAccumulator);
+              console.log(`✅ Real-time metadata update saved for ${step.stepType}`);
+            } catch (error) {
+              console.error(`❌ Failed to save real-time metadata for ${step.stepType}:`, error);
+              // Don't throw - continue pipeline execution
+            }
+          }
         },
         execution_id  // Pass execution ID for storage path
       );

@@ -518,6 +518,7 @@ export interface PipelineConfig {
   enabledSteps?: PipelineStep[];
   quality?: QualityLevel;
   gender?: 'male' | 'female';
+  onStepComplete?: (step: PipelineStepResult) => Promise<void>;  // NEW: Callback for incremental updates
 }
 
 export interface PipelineStepResult {
@@ -615,20 +616,34 @@ export async function executePipeline(
       const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'tryon', executionId);
       currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step (bypasses 5MB limit)
       
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'tryon',
         status: 'completed',
         imageUrl: supabaseUrl,  // Store Supabase URL in metadata
         originalUrl: aiProviderUrl,  // Keep AI provider URL for next step
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for real-time update
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
     } catch (error) {
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'tryon',
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error',
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback even for failures
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
       
       // If try-on fails, entire pipeline fails
       throw error;
@@ -646,21 +661,35 @@ export async function executePipeline(
       const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'basic-upscale', executionId);
       currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step
       
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'basic-upscale',
         status: 'completed',
         imageUrl: supabaseUrl,  // Store Supabase URL in metadata
         originalUrl: aiProviderUrl,  // Keep Replicate URL for next step
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for real-time update (2K is ready!)
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
     } catch (error) {
       console.warn('⚠️  Basic upscale failed, continuing with original image:', error);
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'basic-upscale',
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error',
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for failures too
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
       // Continue with previous image
     }
   }
@@ -681,21 +710,35 @@ export async function executePipeline(
       const supabaseUrl = await uploadStepImageToSupabase(aiProviderUrl, 'enhanced-upscale', executionId);
       currentImageUrl = aiProviderUrl;  // Use AI provider URL for next step
       
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'enhanced-upscale',
         status: 'completed',
         imageUrl: supabaseUrl,  // Store Supabase URL in metadata
         originalUrl: aiProviderUrl,  // FAL.AI URL for next step
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for real-time update (4K is ready!)
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
     } catch (error) {
       console.warn('⚠️  Enhanced upscale failed, continuing with current image:', error);
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'enhanced-upscale',
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error',
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for failures too
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
       // Continue with previous image
     }
   }
@@ -717,21 +760,35 @@ export async function executePipeline(
       console.log(`✅ Face Swap completed successfully`);
       console.log(`   Output: ${aiProviderUrl.substring(0, 80)}...`);
       
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'replicate-face-swap',
         status: 'completed',
         imageUrl: supabaseUrl,  // Store Supabase URL in metadata
         originalUrl: aiProviderUrl,  // Keep Replicate URL
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for real-time update (Face swap is ready!)
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
     } catch (error) {
       console.warn('⚠️  Face swap failed, continuing with current image:', error);
-      results.push({
+      const stepResult: PipelineStepResult = {
         stepType: 'replicate-face-swap',
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error',
         processingTime: Date.now() - startTime,
-      });
+      };
+      
+      results.push(stepResult);
+      
+      // NEW: Call callback for failures too
+      if (config.onStepComplete) {
+        await config.onStepComplete(stepResult);
+      }
       // Continue with previous image
     }
   }

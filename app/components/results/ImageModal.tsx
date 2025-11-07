@@ -50,11 +50,28 @@ export function ImageModal({
   const isProfessionalOrEnterprise = userTier === 'professional' || userTier === 'enterprise';
   const hasBgRemoved = !!image.generation_record?.removed_bg_url;
   
-  // CRITICAL FIX: Check if 4K is available by checking BOTH the URL and the status
-  // URLs might be empty strings '', so check length > 0
-  const has4K = isProfessionalOrEnterprise && (
-    (image.upscale_status === 'completed' && !!image.upscaled_image_url && image.upscaled_image_url.length > 0) ||
-    (image.face_swap_status === 'completed' && !!image.face_swap_image_url && image.face_swap_image_url.length > 0)
+  // CRITICAL: Only show 4K when face swap is complete (final step)
+  // Don't show 4K upscale even if available - wait for face swap to complete
+  const has4K = isProfessionalOrEnterprise && 
+    image.face_swap_status === 'completed' && 
+    !!image.face_swap_image_url && 
+    image.face_swap_image_url.length > 0;
+  
+  // Get the actual 4K image URL (face swap result)
+  const get4KImageUrl = (): string | null => {
+    if (!has4K) return null;
+    return image.face_swap_image_url || null;
+  };
+  
+  const fourKImageUrl = get4KImageUrl();
+  
+  // Check if 4K is currently processing (not completed yet)
+  // This includes both 4K upscale and face swap processing
+  const is4KProcessing = isProfessionalOrEnterprise && (
+    image.upscale_status === 'processing' || 
+    image.face_swap_status === 'processing' ||
+    // If 2K is ready but face swap hasn't completed yet, consider it processing
+    (image.basic_upscale_status === 'completed' && image.face_swap_status !== 'completed')
   );
   
   const has2K = !!image.basic_upscale_url && image.basic_upscale_url.length > 0;
@@ -72,6 +89,7 @@ export function ImageModal({
     face_swap_url_length: image.face_swap_image_url?.length || 0,
     has4K,
     has2K,
+    is4KProcessing,
   };
   
   // Log for debugging (console only, no fetch)
@@ -80,9 +98,14 @@ export function ImageModal({
   // Determine how many columns to show
   const getColumnCount = () => {
     if (isProfessionalOrEnterprise) {
-      // Show 2K and 4K side by side when 4K is available
+      // CRITICAL FIX: Show 2K and 4K columns while 4K is processing
+      // Show 3 columns: 2K + 4K + BG Removed
       if (has2K && has4K && hasBgRemoved) return 3;
-      if (has2K && has4K) return 2; // Show both 2K and 4K
+      // Show 2 columns: 2K + 4K (both completed)
+      if (has2K && has4K) return 2;
+      // Show 2 columns: 2K + 4K Processing indicator (while 4K is processing)
+      if (has2K && is4KProcessing) return 2;
+      // Show 2 columns: 2K + BG Removed
       if (has2K && hasBgRemoved) return 2;
       return 1;
     } else {
@@ -115,7 +138,21 @@ export function ImageModal({
   // Download handler - properly downloads the file instead of opening URL
   const handleDownload = async (url: string, filename: string) => {
     try {
+      console.log('🔽 Attempting download:', { url, filename });
+      
+      // Validate URL
+      if (!url || url.trim() === '') {
+        console.error('❌ Invalid URL for download:', url);
+        alert('Download failed: Invalid image URL');
+        return;
+      }
+      
       const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       
@@ -128,10 +165,16 @@ export function ImageModal({
       
       // Clean up the blob URL
       window.URL.revokeObjectURL(blobUrl);
+      
+      console.log('✅ Download successful:', filename);
     } catch (error) {
-      console.error('Download failed:', error);
+      console.error('❌ Download failed:', error);
       // Fallback to opening in new tab if download fails
-      window.open(url, '_blank');
+      if (url && url.trim() !== '') {
+        window.open(url, '_blank');
+      } else {
+        alert('Download failed: Image URL is not available');
+      }
     }
   };
 
@@ -147,14 +190,14 @@ export function ImageModal({
           /* Single Column Layout */
           <div className="relative">
             <img 
-              src={has4K ? (image.face_swap_image_url || image.upscaled_image_url!) : (has2K ? image.basic_upscale_url! : image.image_url)}
+              src={has4K && fourKImageUrl ? fourKImageUrl : (has2K ? image.basic_upscale_url! : image.image_url)}
               alt="Full size preview"
               className="max-w-full max-h-[85vh] object-contain rounded-lg"
             />
             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
               <button 
                 onClick={() => handleDownload(
-                  has4K ? (image.face_swap_image_url || image.upscaled_image_url!) : (has2K ? image.basic_upscale_url! : image.image_url),
+                  has4K && fourKImageUrl ? fourKImageUrl : (has2K ? image.basic_upscale_url! : image.image_url),
                   `${projectName}_${imageIndex + 1}_${has4K ? '4K' : '2K'}.png`
                 )}
                 className="px-4 py-2 bg-background border border-border rounded-md hover:bg-muted transition-colors"
@@ -193,27 +236,50 @@ export function ImageModal({
             )}
             
             {/* Column 2: 4K Enhanced (Professional/Enterprise only) */}
-            {isProfessionalOrEnterprise && has4K && (
+            {isProfessionalOrEnterprise && (has4K || is4KProcessing) && (
               <div className="flex-1 relative flex flex-col items-center justify-center min-w-0">
-                <img 
-                  src={image.face_swap_image_url || image.upscaled_image_url!}
-                  alt="4K Enhanced"
-                  className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain rounded-lg shadow-xl"
-                />
-                <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
-                  4K Enhanced
-                </div>
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
-                  <button 
-                    onClick={() => handleDownload(image.face_swap_image_url || image.upscaled_image_url!, `${projectName}_${imageIndex + 1}_4K.png`)}
-                    className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                    </svg>
-                    Download 4K
-                  </button>
-                </div>
+                {has4K && fourKImageUrl ? (
+                  // 4K is ready - show the face swap result (final step complete)
+                  <>
+                    <img 
+                      src={fourKImageUrl}
+                      alt="4K Enhanced"
+                      className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain rounded-lg shadow-xl"
+                    />
+                    <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
+                      4K Enhanced
+                    </div>
+                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
+                      <button 
+                        onClick={() => handleDownload(fourKImageUrl, `${projectName}_${imageIndex + 1}_4K.png`)}
+                        className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        Download 4K
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  // 4K is processing - show placeholder with status
+                  <>
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/10 to-indigo-500/10 rounded-lg border-2 border-dashed border-purple-500/30">
+                      <div className="text-center p-8">
+                        <div className="mb-4">
+                          <svg className="w-16 h-16 mx-auto text-purple-500 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                          </svg>
+                        </div>
+                        <div className="text-lg font-semibold text-purple-600 mb-2">4K Processing</div>
+                        <div className="text-sm text-gray-600">Enhanced version coming soon...</div>
+                      </div>
+                    </div>
+                    <div className="absolute top-4 left-4 bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg animate-pulse">
+                      4K Processing...
+                    </div>
+                  </>
+                )}
               </div>
             )}
             
