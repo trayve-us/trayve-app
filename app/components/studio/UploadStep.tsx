@@ -130,9 +130,22 @@ export function UploadStep({
                 <div
                   className={`relative rounded-2xl p-8 border-2 border-dashed transition-all duration-300 cursor-pointer ${
                     isDragging
-                      ? "border-primary bg-primary/5 scale-[1.02]"
-                      : "border-border hover:border-primary/50 hover:bg-primary/5"
+                      ? "scale-[1.02]"
+                      : "border-border"
                   }`}
+                  style={isDragging ? { borderColor: "#702dff", backgroundColor: "rgba(112, 45, 255, 0.05)" } : { borderColor: undefined, backgroundColor: undefined }}
+                  onMouseOver={(e) => {
+                    if (!isDragging) {
+                      e.currentTarget.style.borderColor = "rgba(112, 45, 255, 0.5)";
+                      e.currentTarget.style.backgroundColor = "rgba(112, 45, 255, 0.05)";
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (!isDragging) {
+                      e.currentTarget.style.borderColor = "";
+                      e.currentTarget.style.backgroundColor = "";
+                    }
+                  }}
                   onDrop={handleDrop}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
@@ -143,7 +156,7 @@ export function UploadStep({
                     onChange={handleFileInput}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
-                  <button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-4 px-8 rounded-xl transition-colors flex items-center justify-center space-x-2 shadow-lg">
+                  <button className="w-full text-white font-medium py-4 px-8 rounded-xl transition-colors flex items-center justify-center space-x-2 shadow-lg" style={{ backgroundColor: "#702dff" }} onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#5c24cc"} onMouseOut={(e) => e.currentTarget.style.backgroundColor = "#702dff"}>
                     <span>Upload all your images</span>
                     <span className="text-xl">+</span>
                   </button>

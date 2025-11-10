@@ -259,18 +259,21 @@ export function ModelSelectStep({
                   <div
                     className={`relative overflow-hidden rounded-xl transition-all duration-200 ${
                       isSelected
-                        ? "ring-2 ring-primary shadow-lg"
+                        ? "ring-2 shadow-lg"
                         : "hover:shadow-md"
                     }`}
+                    style={isSelected ? { boxShadow: "0 0 0 2px #702dff" } : {}}
                   >
                     {/* Model Image */}
                     <div className="relative aspect-[2/3] overflow-hidden">
                       <img
                         src={model.image_url}
                         alt={model.name}
-                        className="w-full h-full object-cover object-top"
+                        className="w-full h-full object-cover"
                         style={{
-                          objectPosition: "center top",
+                          objectPosition: "center 2%",
+                          transform: "scale(1.4)",
+                          transformOrigin: "center 2%",
                         }}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
@@ -285,7 +288,7 @@ export function ModelSelectStep({
                       {/* Lock Badge - Top Left Corner (for locked models) */}
                       {isLocked && (
                         <div className="absolute top-3 left-3 z-20">
-                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-primary backdrop-blur-sm rounded-lg shadow-lg">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 backdrop-blur-sm rounded-lg shadow-lg" style={{ backgroundColor: "#702dff" }}>
                             <Lock className="w-3.5 h-3.5 text-white" />
                             <span className="text-white text-xs font-medium">
                               Locked
@@ -300,9 +303,10 @@ export function ModelSelectStep({
                           <div
                             className={`w-6 h-6 rounded-full border-2 transition-all duration-200 ${
                               isSelected
-                                ? "bg-primary border-primary"
+                                ? "border-[#702dff]"
                                 : "bg-white/20 border-white/40 backdrop-blur-sm"
                             }`}
+                            style={isSelected ? { backgroundColor: "#702dff" } : {}}
                           >
                             {isSelected && (
                               <div className="w-full h-full flex items-center justify-center">
@@ -334,7 +338,7 @@ export function ModelSelectStep({
                         {/* Selected State */}
                         {isSelected && !isLocked && (
                           <div className="mt-2 text-center">
-                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-primary/90 backdrop-blur-sm rounded-md">
+                            <div className="inline-flex items-center gap-1 px-2 py-1 backdrop-blur-sm rounded-md" style={{ backgroundColor: "rgba(112, 45, 255, 0.9)" }}>
                               <span className="text-white text-xs font-medium">
                                 Selected
                               </span>

@@ -136,9 +136,10 @@ export function PoseSelectStep({
                   <div
                     className={`relative overflow-hidden rounded-xl transition-all duration-200 ${
                       isSelected
-                        ? "ring-2 ring-primary shadow-lg"
+                        ? "ring-2 shadow-lg"
                         : "hover:shadow-md"
                     }`}
+                    style={isSelected ? { boxShadow: "0 0 0 2px #702dff" } : {}}
                   >
                     {/* Pose Image */}
                     <div className="relative overflow-hidden bg-gray-50">
@@ -162,9 +163,10 @@ export function PoseSelectStep({
                         <div
                           className={`w-6 h-6 rounded-full border-2 transition-all duration-200 ${
                             isSelected
-                              ? "bg-primary border-primary"
+                              ? "border-[#702dff]"
                               : "bg-white/20 border-white/40 backdrop-blur-sm"
                           }`}
+                          style={isSelected ? { backgroundColor: "#702dff" } : {}}
                         >
                           {isSelected ? (
                             <div className="w-full h-full flex items-center justify-center">
@@ -190,7 +192,7 @@ export function PoseSelectStep({
                       {/* Selected State */}
                       {isSelected && (
                         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                          <div className="inline-flex items-center gap-1 px-3 py-1.5 bg-primary rounded-md shadow-lg">
+                          <div className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md shadow-lg" style={{ backgroundColor: "#702dff" }}>
                             <span className="text-white text-sm font-medium">
                               #{selectedIndex + 1}
                             </span>

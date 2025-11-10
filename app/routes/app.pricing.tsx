@@ -158,7 +158,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         variables: {
           name: plan.name,
           returnUrl: returnUrl,
-          test: true, // Use test mode for development
+          test: true, // Use production payment gateway for real transactions
           lineItems: [
             {
               plan: {

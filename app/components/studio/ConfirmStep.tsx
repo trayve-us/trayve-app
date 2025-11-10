@@ -110,7 +110,7 @@ export function ConfirmStep({
                             className="w-full h-full object-contain"
                           />
                         </div>
-                        <div className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-medium border border-background">
+                        <div className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 text-white rounded-full flex items-center justify-center text-xs font-medium border border-background" style={{ backgroundColor: "#702dff" }}>
                           {index + 1}
                         </div>
                       </div>
@@ -171,7 +171,18 @@ export function ConfirmStep({
                   selectedPoses.length === 0 ||
                   isGenerating
                 }
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-2 sm:py-2.5 rounded-xl font-semibold shadow-lg transition-all duration-200 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
+                className="w-full text-white py-2 sm:py-2.5 rounded-xl font-semibold shadow-lg transition-all duration-200 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
+                style={{ backgroundColor: isGenerating || !previewUrl || !selectedModel || selectedPoses.length === 0 ? "#e5e7eb" : "#702dff" }}
+                onMouseOver={(e) => {
+                  if (!isGenerating && previewUrl && selectedModel && selectedPoses.length > 0) {
+                    e.currentTarget.style.backgroundColor = "#5c24cc";
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!isGenerating && previewUrl && selectedModel && selectedPoses.length > 0) {
+                    e.currentTarget.style.backgroundColor = "#702dff";
+                  }
+                }}
               >
                 {isGenerating ? (
                   <span className="flex items-center justify-center gap-2">

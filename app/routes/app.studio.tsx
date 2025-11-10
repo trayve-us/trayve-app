@@ -472,10 +472,11 @@ export default function Studio() {
       <div style={{
         display: "flex",
         flexDirection: "column",
-        minHeight: "calc(100vh - 120px)",
+        height: "calc(100vh - 73px)",
         backgroundColor: "#FAFBFC",
+        overflow: "hidden",
       }}>
-        {/* Steps Navigation Bar */}
+        {/* Steps Navigation Bar - Fixed */}
         <div style={{
           flexShrink: 0,
           backgroundColor: "white",
@@ -577,6 +578,7 @@ export default function Studio() {
           flex: 1,
           padding: "32px 24px",
           overflowY: "auto",
+          overflowX: "hidden",
         }}>
           <div style={{
             maxWidth: "1400px",
