@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.7.2",
+    "@google/genai": "^1.37.0",
     "@prisma/client": "^6.2.1",
     "@radix-ui/react-progress": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
@@ -41,6 +42,7 @@
     "canvas": "^3.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
     "isbot": "^5.1.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.548.0",

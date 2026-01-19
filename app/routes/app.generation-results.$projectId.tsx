@@ -166,9 +166,13 @@ export default function GenerationResultsRevamped() {
         const isProfessional = tier === 'professional' || tier === 'enterprise';
 
         if (isProfessional) {
-          return img.face_swap_status === 'completed' || img.face_swap_status === 'not_available';
+          // For Pro users, complete if 4K is done/failed/not-available
+          return img.upscale_status === 'completed' || 
+                 img.upscale_status === 'failed' || 
+                 img.upscale_status === 'not_available';
         } else {
-          return img.basic_upscale_status === 'completed' || img.basic_upscale_status === 'not_available';
+          // For Free/Creator users, complete if base image exists (Try-On is final step)
+          return !!img.image_url;
         }
       });
 
@@ -267,17 +271,21 @@ export default function GenerationResultsRevamped() {
 
     const imagesToDownload: { url: string; filename: string }[] = [];
 
-    // Always include 2K
-    if (image.basic_upscale_url) {
+    // Always include Base Image (Standard Quality)
+    // For new pipeline: image_url is the standard result
+    // For old pipeline: basic_upscale_url was the standard result
+    const standardUrl = image.image_url || image.basic_upscale_url;
+    
+    if (standardUrl) {
       imagesToDownload.push({
-        url: image.basic_upscale_url,
-        filename: `${project?.name || 'image'}_${index + 1}_2K.png`
+        url: standardUrl,
+        filename: `${project?.name || 'image'}_${index + 1}_Standard.png`
       });
     }
 
     // Add 4K for Professional/Enterprise
     if (isProfessional) {
-      const enhancedUrl = image.face_swap_image_url || image.upscaled_image_url;
+      const enhancedUrl = image.upscaled_image_url || image.face_swap_image_url;
       if (enhancedUrl) {
         imagesToDownload.push({
           url: enhancedUrl,

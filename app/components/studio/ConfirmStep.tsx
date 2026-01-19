@@ -1,4 +1,5 @@
-import { Camera } from "lucide-react";
+import { Camera, ChevronDown, Check, RectangleVertical, RectangleHorizontal, Square, Monitor } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 
 const CREDITS_PER_GENERATION = 1000;
 
@@ -22,6 +23,105 @@ interface ConfirmStepProps {
   selectedPoseObjects?: ModelPose[];
   onGenerate: () => void;
   isGenerating?: boolean;
+  aspectRatio?: string;
+  onAspectRatioChange?: (ratio: string) => void;
+  imageCount?: number;
+  onImageCountChange?: (count: number) => void;
+}
+
+const ASPECT_RATIOS = [
+  { id: "9:16", label: "Vertical", icon: RectangleVertical },
+  { id: "3:4", label: "Portrait", icon: RectangleVertical, recommended: true },
+  { id: "1:1", label: "Square", icon: Square },
+  { id: "4:3", label: "Landscape", icon: RectangleHorizontal },
+  { id: "16:9", label: "Widescreen", icon: Monitor }, // Using Monitor as proxy for 16:9
+];
+
+const IMAGE_COUNTS = [1, 2, 3, 4];
+
+function CustomSelect({ 
+  value, 
+  onChange, 
+  options, 
+  type = "text" 
+}: { 
+  value: string | number, 
+  onChange: (val: any) => void, 
+  options: any[], 
+  type?: "text" | "aspect" 
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find(opt => (type === 'aspect' ? opt.id : opt) === value);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-[#1a1c23] text-white rounded-lg border border-gray-700 hover:border-gray-500 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+           {type === 'aspect' && selectedOption?.icon && <selectedOption.icon className="w-4 h-4 text-gray-400" />}
+           <span className="text-sm font-medium">
+             {type === 'aspect' 
+               ? `${selectedOption?.id} ${selectedOption?.label}` 
+               : `${value} ${value === 1 ? 'image' : 'images'}`
+             }
+           </span>
+        </div>
+        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-2 bg-[#1a1c23] border border-gray-700 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+          {options.map((option) => {
+             const isSelected = type === 'aspect' ? option.id === value : option === value;
+             return (
+              <div
+                key={type === 'aspect' ? option.id : option}
+                onClick={() => {
+                  onChange(type === 'aspect' ? option.id : option);
+                  setIsOpen(false);
+                }}
+                className={`
+                  flex items-center justify-between px-4 py-3 cursor-pointer transition-colors
+                  ${isSelected ? 'bg-[#702dff]/20 text-white' : 'text-gray-300 hover:bg-white/5'}
+                `}
+              >
+                <div className="flex items-center gap-3">
+                   {type === 'aspect' && (
+                     <span className="font-bold text-sm w-8">{option.id}</span>
+                   )}
+                   <span className={type === 'aspect' ? "text-gray-400 text-sm" : "font-medium"}>
+                     {type === 'aspect' ? option.label : `${option} ${option === 1 ? 'image' : 'images'}`}
+                   </span>
+                </div>
+                
+                {type === 'aspect' && option.recommended && (
+                  <span className="text-[10px] text-[#4ade80] font-medium uppercase tracking-wider ml-auto mr-2">
+                    Recommended
+                  </span>
+                )}
+                
+                {isSelected && <Check className="w-4 h-4 text-[#702dff]" />}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ConfirmStep({
@@ -31,6 +131,10 @@ export function ConfirmStep({
   selectedPoseObjects = [],
   onGenerate,
   isGenerating = false,
+  aspectRatio,
+  onAspectRatioChange,
+  imageCount,
+  onImageCountChange,
 }: ConfirmStepProps) {
   // Get actual pose objects for the selected pose IDs
   const selectedPoseData = selectedPoseObjects.filter(pose => 
@@ -139,6 +243,35 @@ export function ConfirmStep({
                 </div>
               )}
             </div>
+
+            {/* Configuration Selectors */}
+            {(onAspectRatioChange || onImageCountChange) && (
+              <div className="space-y-3 pt-2">
+                 {onAspectRatioChange && aspectRatio && (
+                   <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Dimensions</label>
+                      <CustomSelect 
+                        value={aspectRatio} 
+                        onChange={onAspectRatioChange} 
+                        options={ASPECT_RATIOS} 
+                        type="aspect"
+                      />
+                   </div>
+                 )}
+                 
+                 {onImageCountChange && imageCount && (
+                   <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Image Count</label>
+                      <CustomSelect 
+                        value={imageCount} 
+                        onChange={onImageCountChange} 
+                        options={IMAGE_COUNTS} 
+                        type="text"
+                      />
+                   </div>
+                 )}
+              </div>
+            )}
 
             {/* Generation Summary */}
             <div className="pt-4 sm:pt-6 mt-4 sm:mt-6 border-t border-border">

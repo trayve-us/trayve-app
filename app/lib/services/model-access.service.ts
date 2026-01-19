@@ -31,9 +31,12 @@ export type EnrichedModel<T = any> = T & {
  */
 export const FREE_TIER_MODELS = [
   'Chloe',
-  'Emma',
-  'Amara',
-  'Grace'
+  'Grace',
+  'Nia',
+  'Pria',
+  'Priya',
+  'Connor',
+  'Marcus'
 ] as const;
 
 export type FreeTierModel = typeof FREE_TIER_MODELS[number];
@@ -96,7 +99,7 @@ export function getModelAccessInfo(
 ): ModelAccessInfo {
   const locked = isModelLocked(modelName, tier);
   const canAccess = !locked;
-  
+
   // Free tier models are accessible to everyone
   // Premium models require any paid plan (creator, professional, or enterprise)
   const requiredTier: SubscriptionTier = isFreeTierModel(modelName)
@@ -161,13 +164,13 @@ export function getFreeModelsCount(): number {
  */
 export function getSubscriptionTier(metadata?: { subscriptionTier?: string }): SubscriptionTier {
   if (!metadata?.subscriptionTier) return "free";
-  
+
   const tier = metadata.subscriptionTier;
-  
+
   // Map plan names to tier types
   if (tier === "professional" || tier === "plan_professional") return "professional";
   if (tier === "enterprise" || tier === "plan_enterprise") return "enterprise";
   if (tier === "creator" || tier === "plan_creator" || tier === "starter" || tier === "plan_starter") return "creator"; // Creator plan (legacy starter also maps here)
-  
+
   return "free";
 }

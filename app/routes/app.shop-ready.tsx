@@ -7,13 +7,18 @@ import { getShopifyUserByShop } from "../lib/auth";
 import { getUserCreditBalance } from "../lib/credits";
 import { type SubscriptionTier } from "../lib/services/model-access.service";
 import { getActiveSubscription, getSubscriptionHistory } from "../lib/services/subscription.service";
+import { getShopReadyBackgrounds, getAngles } from "../lib/services/resources.service"; // Import service
 import { useState, useEffect } from "react";
+import { useToast } from "../hooks/use-toast";
 import { CreditsDisplay } from "../components/CreditsDisplay";
 import { UserProfile } from "../components/UserProfile";
 import { UploadStep } from "../components/studio/UploadStep";
-import { ModelSelectStep } from "../components/studio/ModelSelectStep";
+import { ReferenceModelStep, type BaseModel } from "../components/studio/ReferenceModelStep";
+import { AnglesSelectStep } from "../components/studio/AnglesSelectStep"; // Import component (to be created)
+import { BackgroundSelectStep } from "../components/studio/BackgroundSelectStep"; // Import component (to be created)
 import { PoseSelectStep } from "../components/studio/PoseSelectStep";
-import { ConfirmStep } from "../components/studio/ConfirmStep";
+import { ShopReadyConfirmStep } from "../components/studio/ShopReadyConfirmStep";
+import { GalleryResultCard } from "../components/results/GalleryResultCard";
 import { Upload, Users, Wand2, Sparkles, ArrowRight, ArrowLeft } from "lucide-react";
 import { TestingPanel } from "../components/TestingPanel";
 
@@ -23,16 +28,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getShopifyUserByShop(shop);
   const balance = user ? await getUserCreditBalance(user.trayve_user_id) : null;
 
+  // Resource Fetching
+  const [backgrounds, angles] = await Promise.all([
+    getShopReadyBackgrounds(),
+    getAngles()
+  ]);
+
   // Fetch actual subscription tier from database
   let subscriptionTier: SubscriptionTier = "free";
-  
+
   if (user?.trayve_user_id) {
     const activeSubscription = await getActiveSubscription(user.trayve_user_id);
-    
+
     if (activeSubscription && activeSubscription.status === "active") {
       // Map plan_tier to SubscriptionTier
       const planTier = activeSubscription.plan_tier;
-      
+
       if (planTier === "professional") {
         subscriptionTier = "professional";
       } else if (planTier === "enterprise") {
@@ -42,7 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       } else if (planTier === "free") {
         subscriptionTier = "free";
       }
-      
+
       console.log(`✅ User ${user.trayve_user_id} has active ${planTier} subscription - tier: ${subscriptionTier}`);
     } else {
       // Check if user has a cancelled paid subscription with remaining credits
@@ -50,11 +61,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const cancelledPaidPlan = subscriptionHistory.find(
         (sub) => sub.status === "cancelled" && sub.plan_tier !== "free"
       );
-      
+
       if (cancelledPaidPlan && balance && balance.available_credits > 0) {
         // Maintain previous tier access while credits remain
         const planTier = cancelledPaidPlan.plan_tier;
-        
+
         if (planTier === "professional") {
           subscriptionTier = "professional";
         } else if (planTier === "enterprise") {
@@ -62,7 +73,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         } else if (planTier === "creator") {
           subscriptionTier = "creator";
         }
-        
+
         console.log(`✅ User ${user.trayve_user_id} has cancelled ${planTier} plan with ${balance.available_credits} credits remaining - maintaining tier: ${subscriptionTier}`);
       } else {
         console.log(`ℹ️ User ${user.trayve_user_id} has no active subscription - using free tier`);
@@ -79,28 +90,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } : null,
     credits: balance
       ? {
-          available: balance.available_credits,
-          total: balance.total_credits,
-        }
+        available: balance.available_credits,
+        total: balance.total_credits,
+      }
       : { available: 0, total: 0 },
     testingMode: process.env.TESTING_MODE === "true",
+    resources: {
+      backgrounds,
+      angles
+    }
   });
 };
 
-export default function Studio() {
-  const { credits, user, testingMode } = useLoaderData<typeof loader>();
+export default function ShopReady() {
+  const { credits, user, testingMode, resources } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const fetcher = useFetcher();
+  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [currentStep, setCurrentStep] = useState(1);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
-  const [selectedPoses, setSelectedPoses] = useState<string[]>([]);
-  const [selectedPoseObjects, setSelectedPoseObjects] = useState<any[]>([]);
+  const [selectedModel, setSelectedModel] = useState<BaseModel | null>(null);
+  const [selectedResultImage, setSelectedResultImage] = useState<string | null>(null);
+  const [selectedAngles, setSelectedAngles] = useState<string[]>([]);
+  const [selectedBackground, setSelectedBackground] = useState<string | null>(null);
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
+
+  // Generation Settings
+  const [aspectRatio, setAspectRatio] = useState("3:4");
+
+
+  // New state for Results Gallery mode
+  const [viewingResults, setViewingResults] = useState(false);
+  const [modelResults, setModelResults] = useState<any[]>([]);
 
   // Check for subscription success message
   const subscribed = searchParams.get('subscribed');
@@ -126,29 +151,29 @@ export default function Studio() {
   const steps = [
     {
       id: 1,
-      title: "Upload",
-      subtitle: "Photos",
-      icon: Upload,
+      title: "Reference Model",
+      subtitle: "AI Model Selection",
+      icon: Users,
       status: currentStep === 1 ? "current" : currentStep > 1 ? "complete" : "upcoming",
     },
     {
       id: 2,
-      title: "Choose Model",
-      subtitle: "AI Model Selection",
-      icon: Users,
+      title: "Select Angles",
+      subtitle: "Pose Selection",
+      icon: Wand2,
       status: currentStep === 2 ? "current" : currentStep > 2 ? "complete" : "upcoming",
     },
     {
       id: 3,
-      title: "Select Poses",
-      subtitle: "Pose Selection",
-      icon: Wand2,
+      title: "Select Background",
+      subtitle: "AI Creation",
+      icon: Sparkles,
       status: currentStep === 3 ? "current" : currentStep > 3 ? "complete" : "upcoming",
     },
     {
       id: 4,
-      title: "Generate & Results",
-      subtitle: "AI Creation",
+      title: "Generate",
+      subtitle: "Final Output",
       icon: Sparkles,
       status: currentStep === 4 ? "current" : "upcoming",
     },
@@ -186,24 +211,61 @@ export default function Studio() {
     setPreviewUrl(null);
   };
 
-  const handleModelSelect = (modelId: string) => {
-    setSelectedModel(modelId);
+  const handleModelSelect = async (model: BaseModel) => {
+    setSelectedModel(model);
+
+    // Switch to Results View
+    setIsGenerating(true);
+    try {
+      const res = await fetch(`/api/models/${model.id}/results`);
+      const data = await res.json();
+
+      if (data.success) {
+        setModelResults(data.results);
+        setViewingResults(true);
+      } else {
+        console.error("Failed to fetch results:", data.error);
+        setModelResults([]);
+        setViewingResults(true);
+      }
+    } catch (e) {
+      console.error("Error fetching results:", e);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handlePoseSelect = (poseId: string) => {
-    setSelectedPoses(prev => {
-      if (prev.includes(poseId)) {
-        return prev.filter(id => id !== poseId);
-      } else if (prev.length < 4) {
-        return [...prev, poseId];
+  const handleResultSelect = (imageUrl: string) => {
+    setSelectedResultImage(imageUrl);
+    setViewingResults(false);
+    setCurrentStep(2); // Advance to Angles
+  };
+
+  const handleAngleToggle = (angleId: string) => {
+    setSelectedAngles(prev => {
+      if (prev.includes(angleId)) {
+        return prev.filter(id => id !== angleId);
       }
-      return prev;
+      // Limit to 4 angles
+      if (prev.length >= 4) {
+        toast({
+          title: "Limit Reached",
+          description: "You can select up to 4 angles only",
+          variant: "destructive",
+        })
+        return prev;
+      }
+      return [...prev, angleId];
     });
+  };
+
+  const handleBackgroundSelect = (backgroundId: string) => {
+    setSelectedBackground(backgroundId);
   };
 
   const handleGenerate = async () => {
     const CREDITS_PER_IMAGE = 1000;
-    const totalCredits = selectedPoses.length * CREDITS_PER_IMAGE;
+    const totalCredits = selectedAngles.length * CREDITS_PER_IMAGE;
 
     // Check if user has enough credits
     if (credits.available < totalCredits) {
@@ -211,92 +273,73 @@ export default function Studio() {
       return;
     }
 
-    if (!uploadedFile) {
-      setGenerationError("Please upload a clothing image first");
-      return;
-    }
-
-    if (!selectedModel) {
-      setGenerationError("Please select a model");
-      return;
-    }
-
-    if (selectedPoses.length === 0) {
-      setGenerationError("Please select at least one pose");
+    if (!selectedModel || selectedAngles.length === 0 || !selectedBackground) {
+      setGenerationError("Please maintain selection of model, angles, and background.");
       return;
     }
 
     setIsGenerating(true);
     setGenerationError(null);
 
+    // 1. Get Resources Data
+    const backgroundObj = resources.backgrounds.find(b => b.id === selectedBackground);
+    // Assuming background object has a 'prompt' or 'description' field. 
+    // If not, we might need to fallback to name or fetching it.
+    // Based on `getShopReadyBackgrounds` usually returning simple objects, let's assume `prompt` exists.
+    // If explicit prompt is missing, use name/description.
+    const backgroundPrompt = (backgroundObj as any)?.prompt || (backgroundObj as any)?.description || (backgroundObj as any)?.name || "Studio Background";
+
+    // 2. Construct Poses with Angle Specific Prompts
+    const poses = selectedAngles.map(angleId => {
+      const angleObj = resources.angles.find(a => a.id === angleId);
+      const anglePrompt = (angleObj as any)?.prompt || (angleObj as any)?.value || (angleObj as any)?.name || "Front View";
+
+      return {
+        pose_id: angleId,
+        // CRITICAL: Use the specific result image if selected (VTO result), otherwise model default
+        image_url: selectedResultImage || selectedModel.image_url,
+        pose_name: (angleObj as any)?.name || "Angle",
+        prompt_overrides: {
+          angle: anglePrompt
+        }
+      };
+    });
+
     try {
-      // Step 1: Upload clothing image to Supabase Storage
-      console.log("📤 Uploading clothing image...");
-      
-      const fileName = `${Date.now()}_${uploadedFile.name}`;
-      const uploadFormData = new FormData();
-      uploadFormData.append("file", uploadedFile);
-      uploadFormData.append("bucket", "user-images");
-      uploadFormData.append("path", `clothing/${fileName}`);
+      console.log("🚀 Starting generation...");
 
-      const uploadResponse = await fetch("/api/storage/upload", {
-        method: "POST",
-        body: uploadFormData,
-      });
-
-      const uploadResult = await uploadResponse.json();
-
-      if (!uploadResult.success || !uploadResult.url) {
-        setGenerationError(uploadResult.error || "Failed to upload clothing image");
-        setIsGenerating(false);
-        return;
-      }
-
-      const clothingImageUrl = uploadResult.url;
-      console.log("✅ Clothing image uploaded:", clothingImageUrl);
-
-      // Step 2: Prepare poses array with URLs from selectedPoseObjects (only selected ones)
-      const posesArray = selectedPoseObjects
-        .filter(pose => selectedPoses.includes(pose.id))
-        .map(pose => ({
-          pose_id: pose.id,
-          image_url: pose.image_url,
-          pose_name: pose.pose_name || pose.name,
-        }));
-
-      console.log("📸 Sending poses:", posesArray.length, "poses");
-      console.log("📝 Selected pose IDs:", selectedPoses);
-
-      // Step 3: Execute the pipeline (credits will be deducted inside the pipeline)
-      console.log("🚀 Starting pipeline execution...");
-      console.log("💳 Credits will be deducted: ", totalCredits, "(", selectedPoses.length, "poses × 1000 credits)");
-      
-      const pipelineResponse = await fetch("/api/pipeline/execute", {
+      const response = await fetch("/api/pipeline/execute", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          base_model_id: selectedModel,
-          clothing_image_url: clothingImageUrl,
-          poses: posesArray,
-          project_name: 'Untitled project',
-          project_description: `AI try-on with ${selectedPoses.length} pose(s)`,
+          base_model_id: selectedModel.id,
+          // CRITICAL: Pass the specific image URL we are viewing (e.g. VTO result)
+          // This overrides the default model image in the backend
+          clothing_image_url: selectedResultImage || selectedModel.image_url,
+          project_name: `Shop Ready - ${selectedModel.name || 'Model'}`,
+          mode: 'product_shots',
+          prompts: {
+            background: backgroundPrompt
+          },
+          poses: poses
         }),
       });
 
-      const pipelineResult = await pipelineResponse.json();
+      const data = await response.json();
 
-      if (!pipelineResult.success) {
-        setGenerationError(pipelineResult.error || "Failed to start generation pipeline");
-        setIsGenerating(false);
-        return;
+      if (!data.success) {
+        throw new Error(data.error || "Generation failed to start");
       }
 
-      console.log("✅ Pipeline started:", pipelineResult);
+      const executionId = data.execution_id;
+      const projectId = data.project_id;
+      console.log(`✅ Generation started: ${executionId}, Project: ${projectId}`);
 
-      // Redirect to generation results page with the project ID
-      navigate(`/app/generation-results/${pipelineResult.project_id}?generating=true`);
+      // Redirect to generation results page
+      navigate(`/app/generation-results/${projectId}?generating=true`);
+
     } catch (error: any) {
       console.error("Generation error:", error);
       setGenerationError(error.message || "Failed to start generation");
@@ -307,11 +350,11 @@ export default function Studio() {
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return uploadedFile !== null;
-      case 2:
         return selectedModel !== null;
+      case 2:
+        return selectedAngles.length > 0;
       case 3:
-        return selectedPoses.length > 0;
+        return selectedBackground !== null;
       case 4:
         return true;
       default:
@@ -319,9 +362,10 @@ export default function Studio() {
     }
   };
 
+
   return (
     <Page fullWidth>
-      <TitleBar title="Virtual Try-On Studio" />
+      <TitleBar title="Shop Ready" />
 
       {/* TOP NAVBAR WITH CREDITS */}
       <div style={{
@@ -340,35 +384,19 @@ export default function Studio() {
           margin: "0 auto",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
-            <img 
-              src="/logo_trayve.png" 
-              alt="Trayve" 
+            <img
+              src="/logo_trayve.png"
+              alt="Trayve"
               style={{
                 height: "32px",
                 width: "auto",
               }}
             />
-            
+
             {/* Navigation Tabs */}
             <nav style={{ display: "flex", gap: "8px" }}>
               <button
                 onClick={() => navigate("/app/studio")}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                  fontWeight: "500",
-                  color: "#702dff",
-                  backgroundColor: "rgba(112, 45, 255, 0.1)",
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                Virtual Try-on
-              </button>
-              <button
-                onClick={() => navigate("/app/shop-ready")}
                 style={{
                   padding: "8px 16px",
                   borderRadius: "8px",
@@ -385,6 +413,22 @@ export default function Studio() {
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Virtual Try-on
+              </button>
+              <button
+                onClick={() => navigate("/app/shop-ready")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#702dff",
+                  backgroundColor: "rgba(112, 45, 255, 0.1)",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
                 }}
               >
                 Shop Ready
@@ -481,7 +525,7 @@ export default function Studio() {
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <circle cx="10" cy="10" r="9" fill="#00A663" />
-                <path d="M6 10l3 3 5-6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M6 10l3 3 5-6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span style={{ color: "#004C3F", fontWeight: 500 }}>
                 <strong>Payment successful!</strong> {creditsAdded} images have been added to your monthly allowance for the {planName}.
@@ -531,6 +575,9 @@ export default function Studio() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            maxWidth: "1400px",
+            margin: "0 auto",
+            width: "100%",
           }}>
             {/* Left: Step Indicators */}
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -549,11 +596,11 @@ export default function Studio() {
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        padding: "12px 24px",
+                        padding: "8px 16px",
                         backgroundColor: isActive ? "#702dff" : "#f3f4f6",
                         border: "none",
                         borderRadius: "100px",
-                        fontSize: "14px",
+                        fontSize: "13px",
                         fontWeight: "500",
                         color: isActive ? "white" : "#6b7280",
                         cursor: isClickable ? "pointer" : "not-allowed",
@@ -580,7 +627,7 @@ export default function Studio() {
 
             {/* Right: Next Button */}
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              {currentStep < 4 && (
+              {currentStep < 4 && !viewingResults && (
                 <button
                   onClick={handleNextStep}
                   disabled={!canProceed()}
@@ -588,11 +635,11 @@ export default function Studio() {
                     display: "flex",
                     alignItems: "center",
                     gap: "8px",
-                    padding: "12px 28px",
+                    padding: "8px 20px",
                     backgroundColor: canProceed() ? "#702dff" : "#e5e7eb",
                     border: "none",
                     borderRadius: "100px",
-                    fontSize: "14px",
+                    fontSize: "13px",
                     fontWeight: "500",
                     color: canProceed() ? "white" : "#9ca3af",
                     cursor: canProceed() ? "pointer" : "not-allowed",
@@ -629,80 +676,118 @@ export default function Studio() {
             margin: "0 auto",
             width: "100%",
           }}>
-            {/* Step 1: Upload */}
-            {currentStep === 1 && (
-              <UploadStep
-                uploadedFile={uploadedFile}
-                previewUrl={previewUrl}
-                onFileSelect={handleFileSelect}
-                onRemoveFile={handleRemoveFile}
-              />
-            )}
-
-            {/* Step 2: Model Selection */}
-            {currentStep === 2 && (
-              <ModelSelectStep
-                selectedModel={selectedModel}
+            {/* Step 1: Model Selection */}
+            {currentStep === 1 && !viewingResults && (
+              <ReferenceModelStep
+                selectedModel={selectedModel?.id || null}
                 onModelSelect={handleModelSelect}
                 subscriptionTier={user?.subscriptionTier || "free"}
+                showGenerationStats={true}
               />
             )}
 
-            {/* Step 3: Pose Selection */}
-            {currentStep === 3 && (
-              <PoseSelectStep
-                selectedModel={selectedModel}
-                selectedPoses={selectedPoses}
-                onPoseSelect={handlePoseSelect}
-                onPoseObjectsChange={setSelectedPoseObjects}
-              />
-            )}
+            {/* Results Gallery Mode */}
+            {viewingResults && (
+              <div className="w-full">
+                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "24px" }}>
+                  <button
+                    onClick={() => {
+                      setViewingResults(false);
+                      setSelectedModel(null);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      background: "white",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "8px",
+                      padding: "8px 16px",
+                      cursor: "pointer",
+                      color: "#374151",
+                      fontSize: "14px",
+                      fontWeight: "500",
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    <ArrowLeft size={16} /> Back
+                  </button>
+                  <h2 style={{ fontSize: "20px", fontWeight: "600", color: "#111827", margin: 0 }}>
+                    Generated Results ({modelResults.length})
+                  </h2>
+                </div>
 
-            {/* Step 4: Confirm & Generate */}
-            {currentStep === 4 && (
-              <>
-                {generationError && (
+                {isGenerating ? (
+                  <div style={{ textAlign: "center", padding: "60px" }}>
+                    <div style={{ color: "#6b7280" }}>Loading results...</div>
+                  </div>
+                ) : modelResults.length === 0 ? (
                   <div style={{
-                    backgroundColor: "#FEE2E2",
-                    borderLeft: "4px solid #EF4444",
-                    padding: "16px",
-                    marginBottom: "24px",
-                    borderRadius: "8px",
+                    textAlign: "center",
+                    padding: "60px",
+                    backgroundColor: "#f9fafb",
+                    borderRadius: "12px",
+                    border: "1px dashed #d1d5db"
                   }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <circle cx="10" cy="10" r="9" fill="#EF4444" />
-                        <path d="M10 6v5M10 13v1" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                      </svg>
-                      <div>
-                        <strong style={{ color: "#7F1D1D" }}>Error:</strong>
-                        <span style={{ color: "#991B1B", marginLeft: "8px" }}>{generationError}</span>
-                      </div>
-                      <button
-                        onClick={() => setGenerationError(null)}
-                        style={{
-                          marginLeft: "auto",
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#7F1D1D",
-                          fontSize: "20px",
+                    <p style={{ color: "#6b7280", margin: 0 }}>No results found for this model.</p>
+                  </div>
+                ) : (
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                    gap: "24px"
+                  }}>
+                    {modelResults.map((result) => (
+                      <GalleryResultCard
+                        key={result.id}
+                        image={{
+                          id: result.id,
+                          image_url: result.result_image_url || result.image_url,
+                          upscaled_image_url: result.upscaled_image_url,
+                          upscale_status: result.upscale_status,
                         }}
-                      >
-                        ×
-                      </button>
-                    </div>
+                        userTier={user?.subscriptionTier as any || 'free'}
+                        onImageClick={() => handleResultSelect(result.result_image_url || result.image_url)}
+                        onSelect={() => handleResultSelect(result.result_image_url || result.image_url)}
+                      />
+                    ))}
                   </div>
                 )}
-                <ConfirmStep
-                  previewUrl={previewUrl}
-                  selectedModel={selectedModel}
-                  selectedPoses={selectedPoses}
-                  selectedPoseObjects={selectedPoseObjects}
-                  onGenerate={handleGenerate}
-                  isGenerating={isGenerating}
-                />
-              </>
+              </div>
+            )}
+
+            {/* Step 2: Angles Selection */}
+            {currentStep === 2 && (
+              <AnglesSelectStep
+                angles={resources?.angles}
+                selectedAngles={selectedAngles}
+                onAngleToggle={handleAngleToggle}
+              />
+            )}
+
+            {/* Step 3: Background Selection */}
+            {currentStep === 3 && (
+              <BackgroundSelectStep
+                backgrounds={resources?.backgrounds}
+                selectedBackgroundId={selectedBackground}
+                onBackgroundSelect={handleBackgroundSelect}
+              />
+            )}
+
+            {/* Step 4: Generate */}
+            {currentStep === 4 && (
+              <ShopReadyConfirmStep
+                previewUrl={previewUrl}
+                selectedModelImage={selectedResultImage || selectedModel?.image_url}
+                selectedBackgroundImage={resources.backgrounds.find(b => b.id === selectedBackground)?.thumbnail_url || resources.backgrounds.find(b => b.id === selectedBackground)?.url}
+                onGenerate={handleGenerate}
+                isGenerating={isGenerating}
+                aspectRatio={aspectRatio}
+                onAspectRatioChange={setAspectRatio}
+
+                generationCount={selectedAngles.length}
+                selectedAnglesData={resources.angles.filter(a => selectedAngles.includes(a.id))}
+              />
             )}
           </div>
         </div>

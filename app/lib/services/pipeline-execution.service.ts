@@ -15,6 +15,7 @@
  */
 
 import { supabaseAdmin } from "../storage/supabase.server";
+import type { VertexPromptMode } from "../vertex-prompt";
 import {
   executePipeline,
   getEnabledSteps,
@@ -37,16 +38,27 @@ export interface PoseInput {
   pose_id: string;
   image_url: string;
   pose_name?: string;
+  prompt_overrides?: {
+    theme?: string;
+    background?: string;
+    angle?: string;
+  };
 }
 
 export interface ExecutionInput {
   user_id: string;
   subscription_tier: 'free' | 'creator' | 'professional' | 'enterprise';
   base_model_id: string;
-  clothing_image_url: string;
+  clothing_image_url?: string; // Optional for Studio Modes
   poses: PoseInput[];
   project_name?: string;
   project_description?: string;
+  mode?: VertexPromptMode; // NEW: 'social_media' or 'product_shots'
+  prompts?: {
+    theme?: string;
+    background?: string;
+    angle?: string;
+  };
 }
 
 export interface ExecutionResult {
@@ -90,7 +102,7 @@ async function updateGenerationMetadata(
     console.log(`💾 Updating metadata for result ${resultId}...`);
     console.log(`   Pipeline results count: ${pipelineResults.length}`);
     console.log(`   Final image URL: ${finalImageUrl ? 'PROVIDED' : 'NONE'}`);
-    
+
     // Build metadata from pipeline results
     const metadata: any = {
       status: finalImageUrl ? 'completed' : 'processing',
@@ -103,7 +115,7 @@ async function updateGenerationMetadata(
 
     pipelineResults.forEach((step) => {
       console.log(`   Processing step: ${step.stepType} - status: ${step.status}`);
-      
+
       if (step.stepType === 'tryon') {
         metadata.tryon_status = step.status;
         if (step.status === 'completed' && step.imageUrl) {
@@ -112,14 +124,6 @@ async function updateGenerationMetadata(
         } else if (step.status === 'failed') {
           metadata.tryon_error = step.error || 'Unknown error';
         }
-      } else if (step.stepType === 'basic-upscale') {
-        metadata.basic_upscale_status = step.status;
-        if (step.status === 'completed' && step.imageUrl) {
-          metadata.basic_upscale_url = String(step.imageUrl);
-          console.log(`     ✅ Set basic_upscale_url: ${String(step.imageUrl).substring(0, 60)}...`);
-        } else if (step.status === 'failed') {
-          metadata.basic_upscale_error = step.error || 'Unknown error';
-        }
       } else if (step.stepType === 'enhanced-upscale') {
         metadata.upscale_status = step.status;
         if (step.status === 'completed' && step.imageUrl) {
@@ -127,14 +131,6 @@ async function updateGenerationMetadata(
           console.log(`     ✅ Set upscaled_image_url: ${String(step.imageUrl).substring(0, 60)}...`);
         } else if (step.status === 'failed') {
           metadata.upscale_error = step.error || 'Unknown error';
-        }
-      } else if (step.stepType === 'replicate-face-swap') {
-        metadata.face_swap_status = step.status;
-        if (step.status === 'completed' && step.imageUrl) {
-          metadata.face_swap_image_url = String(step.imageUrl);
-          console.log(`     ✅ Set face_swap_image_url: ${String(step.imageUrl).substring(0, 60)}...`);
-        } else if (step.status === 'failed') {
-          metadata.face_swap_error = step.error || 'Unknown error';
         }
       }
     });
@@ -183,7 +179,7 @@ async function updateGenerationMetadata(
 export async function startPipelineExecution(
   input: ExecutionInput
 ): Promise<ExecutionResult> {
-  const { user_id, subscription_tier, base_model_id, clothing_image_url, poses, project_name, project_description } = input;
+  const { user_id, subscription_tier, base_model_id, clothing_image_url, poses, project_name, project_description, mode, prompts } = input;
 
   try {
     console.log('═══════════════════════════════════════════════════════');
@@ -279,8 +275,8 @@ export async function startPipelineExecution(
         project_id: project.id,
         user_image_url: poses[0].image_url, // First pose as user image
         user_image_path: poses[0].pose_id,
-        clothing_image_url,
-        clothing_image_path: clothing_image_url,
+        clothing_image_url: clothing_image_url || '', // Fallback for Shop/Post Ready
+        clothing_image_path: clothing_image_url || '', // Fallback for Shop/Post Ready
         subscription_tier,
         status: "processing",
         enabled_steps: enabledSteps,
@@ -288,7 +284,9 @@ export async function startPipelineExecution(
         config: {
           tier: subscription_tier,
           total_poses: poses.length,
-          poses: poses.map(p => ({ pose_id: p.pose_id, pose_name: p.pose_name }))
+          poses: poses.map(p => ({ pose_id: p.pose_id, pose_name: p.pose_name })),
+          mode, // Store mode
+          prompts // Store prompts
         },
         input: {
           poses: poses,
@@ -325,7 +323,12 @@ export async function startPipelineExecution(
         generation_config: {
           tier: subscription_tier,
           enabled_steps: enabledSteps,
-          clothing_image_url,
+          clothing_image_url: clothing_image_url || '',
+          mode, // Store original Vertex mode
+          meta: {
+            workflow_key: mode === 'social_media' ? 'post_ready' : 'shop_ready',
+          },
+          prompts // Store prompts
         },
         status: 'processing',
       })
@@ -340,36 +343,84 @@ export async function startPipelineExecution(
     console.log(`✅ User generation created: ${userGeneration.id}`);
     console.log('───────────────────────────────────────────────────────');
 
-    // Create generation result placeholders for each pose
-    console.log('📝 Creating generation result placeholders...');
-    const generationRecords = poses.map((pose) => ({
-      generation_id: userGeneration.id, // Link to user_generations record
-      project_id: project.id,
-      user_id,
-      pose_id: pose.pose_id,
-      pose_name: pose.pose_name,
-      clothing_image_url,
-      model_image_url: pose.image_url,
-      result_image_url: '', // Will be updated after generation
-      supabase_path: '', // Will be updated after upload
-      generation_tier: subscription_tier,
-      generation_config: {
-        enabled_steps: enabledSteps,
-        pipeline_execution_id: execution.id, // Store pipeline execution reference in config
-      },
-      generation_metadata: {
+    let generationResults: any[] = [];
+
+    if (mode) {
+      // -------------------------------------------------------------------------
+      // STUDIO MODE (Shop/Post Ready) -> Insert into studio_generations
+      // -------------------------------------------------------------------------
+      console.log('📝 Creating STUDIO generation records...');
+      const studioRecords = poses.map((pose) => ({
+        user_id,
+        project_id: project.id,
+        pipeline_execution_id: execution.id,
+        base_model_id,
+        mode,
+        prompt_config: {
+          prompts,
+          pose_prompts: pose.prompt_overrides
+        },
+        pose_identifier: pose.pose_name || pose.pose_id,
         status: 'processing',
-      },
-    }));
+        metadata: {
+          status: 'processing'
+        }
+      }));
 
-    const { data: generationResults, error: generationError } = await supabaseAdmin
-      .from("generation_results")
-      .insert(generationRecords)
-      .select();
+      const { data: studioResults, error: studioError } = await supabaseAdmin
+        .from("studio_generations")
+        .insert(studioRecords)
+        .select();
 
-    if (generationError || !generationResults) {
-      console.error("❌ GENERATION RECORDS ERROR:", generationError);
-      throw new Error("Failed to create generation records");
+      if (studioError || !studioResults) {
+        console.error("❌ STUDIO GENERATION RECORDS ERROR:", studioError);
+        throw new Error("Failed to create studio generation records");
+      }
+
+      // Map back to expected format for return
+      generationResults = studioResults.map(r => ({
+        ...r,
+        pose_id: r.pose_identifier, // Map identifier to pose_id for consistency in response
+        pose_name: r.pose_identifier
+      }));
+
+    } else {
+      // -------------------------------------------------------------------------
+      // VTO MODE -> Insert into generation_results
+      // -------------------------------------------------------------------------
+      console.log('📝 Creating VTO generation result placeholders...');
+      const generationRecords = poses.map((pose) => ({
+        generation_id: userGeneration.id, // Link to user_generations record
+        project_id: project.id,
+        user_id,
+        pose_id: pose.pose_id,
+        pose_name: pose.pose_name,
+        clothing_image_url,
+        model_image_url: pose.image_url,
+        result_image_url: '', // Will be updated after generation
+        supabase_path: '', // Will be updated after upload
+        generation_tier: subscription_tier,
+        generation_config: {
+          enabled_steps: enabledSteps,
+          pipeline_execution_id: execution.id, // Store pipeline execution reference in config
+          mode: undefined,
+          prompts: undefined
+        },
+        generation_metadata: {
+          status: 'processing',
+        },
+      }));
+
+      const { data: vtoResults, error: vtoError } = await supabaseAdmin
+        .from("generation_results")
+        .insert(generationRecords)
+        .select();
+
+      if (vtoError || !vtoResults) {
+        console.error("❌ GENERATION RECORDS ERROR:", vtoError);
+        throw new Error("Failed to create generation records");
+      }
+      generationResults = vtoResults;
     }
 
     console.log(`✅ Created ${generationResults.length} generation result records`);
@@ -383,7 +434,7 @@ export async function startPipelineExecution(
     const creditsToConsume = 1000 * poses.length;
     console.log(`   Amount to deduct: ${creditsToConsume} credits`);
     console.log(`   Breakdown: ${poses.length} poses × 1000 credits`);
-    
+
     const consumeResult = await consumeCreditsForExecution(execution.id, creditsToConsume);
 
     if (!consumeResult.success) {
@@ -412,8 +463,12 @@ export async function startPipelineExecution(
     console.log('');
 
     // Start async processing (don't await - return immediately)
-    processAllPoses(execution.id, poses, clothing_image_url, subscription_tier, base_model_id, creditsToConsume).catch((error) => {
+    processAllPoses(execution.id, poses, clothing_image_url || '', subscription_tier, base_model_id, creditsToConsume).catch(async (error) => {
       console.error(`❌ Error in background processing for execution ${execution.id}:`, error);
+      // CRITICAL: Refund credits if the ENTIRE background process crashes
+      console.log(`💰 Refunding ${creditsToConsume} credits due to critical process failure`);
+      await refundCreditsForExecution(execution.id, creditsToConsume);
+      await updateExecutionStatus(execution.id, "failed", 0, poses.length, 0);
     });
 
     return {
@@ -471,32 +526,63 @@ async function processAllPoses(
 
   // Get all generation results for this execution
   console.log('📥 Fetching generation results from database...');
-  
+
   // First get the user_generation record linked to this execution via project_id
   const { data: executionData } = await supabaseAdmin
     .from("pipeline_executions")
-    .select("project_id")
+    .select("project_id, config")
     .eq("id", execution_id)
     .single();
 
   if (!executionData?.project_id) {
     console.error(`❌ Failed to find project for execution ${execution_id}`);
+    await refundCreditsForExecution(execution_id, creditsAlreadyDeducted);
     await updateExecutionStatus(execution_id, "failed", 0, poses.length, 0);
     return;
   }
 
-  // Fetch generation results via project_id
-  const { data: generationResults, error: fetchError } = await supabaseAdmin
-    .from("generation_results")
-    .select("*")
-    .eq("project_id", executionData.project_id)
-    .contains("generation_config", { pipeline_execution_id: execution_id });
+  const executionConfig = executionData.config as any;
+  const isStudioMode = !!executionConfig?.mode;
+  let generationResults: any[] = [];
 
-  if (fetchError || !generationResults) {
-    console.error(`❌ Failed to fetch generation results for execution ${execution_id}`);
-    console.error('Error:', fetchError);
-    await updateExecutionStatus(execution_id, "failed", 0, poses.length, 0);
-    return;
+  if (isStudioMode) {
+    // Fetch STUDIO results
+    const { data, error } = await supabaseAdmin
+      .from("studio_generations")
+      .select("*")
+      .eq("pipeline_execution_id", execution_id);
+
+    if (error || !data) {
+      console.error(`❌ Failed to fetch studio generations for execution ${execution_id}`);
+      await refundCreditsForExecution(execution_id, creditsAlreadyDeducted);
+      await updateExecutionStatus(execution_id, "failed", 0, poses.length, 0);
+      return;
+    }
+    generationResults = data.map(r => ({
+      ...r,
+      pose_id: r.pose_identifier, // Map identifier to pose_id
+      generation_config: {  // Normalize config structure
+        mode: r.mode,
+        prompts: r.prompt_config?.prompts,
+        pose_prompts: r.prompt_config?.pose_prompts
+      }
+    }));
+  } else {
+    // Fetch VTO results
+    const { data, error } = await supabaseAdmin
+      .from("generation_results")
+      .select("*")
+      .eq("project_id", executionData.project_id)
+      .contains("generation_config", { pipeline_execution_id: execution_id });
+
+    if (error || !data) {
+      console.error(`❌ Failed to fetch generation results for execution ${execution_id}`);
+      console.error('Error:', error);
+      await refundCreditsForExecution(execution_id, creditsAlreadyDeducted);
+      await updateExecutionStatus(execution_id, "failed", 0, poses.length, 0);
+      return;
+    }
+    generationResults = data;
   }
 
   console.log(`✅ Fetched ${generationResults.length} generation result records`);
@@ -506,9 +592,10 @@ async function processAllPoses(
   console.log('🚀 Starting PARALLEL processing of all poses...');
   console.log(`   Total poses to process: ${poses.length}`);
   console.log('───────────────────────────────────────────────────────');
-  
+
   const processPose = async (pose: PoseInput, index: number) => {
-    const generationResult = generationResults.find((r) => r.pose_id === pose.pose_id);
+    // Match by pose_id (or identifier for Studio)
+    const generationResult = generationResults.find((r) => r.pose_id === (pose.pose_name || pose.pose_id) || r.pose_id === pose.pose_id);
 
     console.log('');
     console.log('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
@@ -519,10 +606,16 @@ async function processAllPoses(
     console.log(`🖼️  Pose Image: ${pose.image_url.substring(0, 80)}...`);
 
     if (!generationResult) {
-      console.error(`❌ Generation result not found for pose ${pose.pose_id}`);
-      console.error('   Skipping this pose...');
+      console.error(`❌ Generation result not found for pose ${pose.pose_id} / ${pose.pose_name}`);
       return { success: false, index };
     }
+
+    // Extract mode and prompts from config
+    const genConfig = generationResult.generation_config as any;
+    const mode = genConfig?.mode;
+    const globalPrompts = genConfig?.prompts || {};
+    const posePrompts = genConfig?.pose_prompts || {};
+    const prompts = { ...globalPrompts, ...posePrompts };
 
     console.log(`🆔 Result Record ID: ${generationResult.id}`);
     console.log('───────────────────────────────────────────────────────');
@@ -530,7 +623,7 @@ async function processAllPoses(
     try {
       const poseStartTime = Date.now();
       console.log(`⏱️  Started at: ${new Date().toISOString()}`);
-      
+
       // CRITICAL: Each pose uses its OWN image_url, not the first pose's URL
       const poseImageUrl = pose.image_url;
       console.log(`🎨 Using pose-specific image URL (not first pose)`);
@@ -543,24 +636,34 @@ async function processAllPoses(
       console.log('🚀 Executing AI pipeline...');
       const pipelineResults: PipelineStepResult[] = await executePipeline(
         poseImageUrl,
-        clothing_image_url,
+        clothing_image_url || '', // Can be empty for studio modes
         {
           tier: subscription_tier as any,
+          mode: mode, // Pass mode
+          prompts: prompts, // Pass prompts
+
           // NEW: Add callback to update metadata after each step completes
           onStepComplete: async (step: PipelineStepResult) => {
             console.log(`🔄 Step completed callback triggered: ${step.stepType} (${step.status})`);
-            
-            // Add this step to the accumulator
+
             stepResultsAccumulator.push(step);
-            
-            // Update metadata immediately with accumulated steps
-            // This allows the UI to show 2K while 4K is processing
+
             try {
-              await updateGenerationMetadata(generationResult.id, stepResultsAccumulator);
+              if (isStudioMode) {
+                // Update Studio Generations
+                await supabaseAdmin.from("studio_generations").update({
+                  metadata: {
+                    status: 'processing', // Keep as processing until done
+                    step_results: stepResultsAccumulator
+                  }
+                }).eq("id", generationResult.id);
+              } else {
+                // Update VTO Generations
+                await updateGenerationMetadata(generationResult.id, stepResultsAccumulator);
+              }
               console.log(`✅ Real-time metadata update saved for ${step.stepType}`);
             } catch (error) {
               console.error(`❌ Failed to save real-time metadata for ${step.stepType}:`, error);
-              // Don't throw - continue pipeline execution
             }
           }
         },
@@ -570,7 +673,7 @@ async function processAllPoses(
       const poseProcessingTime = ((Date.now() - poseStartTime) / 1000).toFixed(2);
       console.log(`✅ Pipeline completed in ${poseProcessingTime}s`);
       console.log(`📊 Steps executed: ${pipelineResults.length}`);
-      
+
       pipelineResults.forEach((step: any, stepIndex: number) => {
         const statusEmoji = step.status === 'completed' ? '✅' : step.status === 'failed' ? '❌' : '⏭️';
         console.log(`   ${statusEmoji} ${stepIndex + 1}. ${step.stepType} (${step.status})`);
@@ -588,7 +691,26 @@ async function processAllPoses(
       console.log('🔄 About to save metadata to database...');
       console.log(`   Result ID: ${generationResult.id}`);
       console.log(`   Pipeline Results Count: ${pipelineResults.length}`);
-      await updateGenerationMetadata(generationResult.id, pipelineResults);
+
+      const finalImage = pipelineResults[pipelineResults.length - 1].imageUrl;
+      // Derived path logic if needed, or empty string here as it is intermediate
+      const finalPath = '';
+
+      if (isStudioMode) {
+        await supabaseAdmin.from("studio_generations").update({
+          status: 'completed',
+          result_image_url: finalImage,
+          supabase_path: finalPath,
+          updated_at: new Date().toISOString(),
+          metadata: {
+            status: 'completed',
+            duration: Date.now() - poseStartTime,
+            step_results: pipelineResults
+          }
+        }).eq("id", generationResult.id);
+      } else {
+        await updateGenerationMetadata(generationResult.id, pipelineResults, finalImage, finalPath);
+      }
       console.log('✅ Intermediate metadata saved to database');
 
       // Check if CRITICAL steps failed (try-on is critical, upscales are optional)
@@ -600,7 +722,7 @@ async function processAllPoses(
       }
 
       // Log warnings for optional step failures but don't fail the entire pipeline
-      const failedOptionalSteps = pipelineResults.filter((r) => 
+      const failedOptionalSteps = pipelineResults.filter((r) =>
         r.status === 'failed' && r.stepType !== 'tryon'
       );
       failedOptionalSteps.forEach(step => {
@@ -611,7 +733,7 @@ async function processAllPoses(
       // Get the final image URL (last completed step)
       const completedSteps = pipelineResults.filter((r) => r.status === 'completed');
       const finalStep = completedSteps[completedSteps.length - 1];
-      
+
       if (!finalStep || !finalStep.imageUrl) {
         console.error('❌ No final image produced by pipeline');
         throw new Error("No final image produced by pipeline");
@@ -638,10 +760,10 @@ async function processAllPoses(
       const filename = `generation_${execution_id}_pose_${pose.pose_id}_${timestamp}.png`;
       console.log(`   Filename: ${filename}`);
       console.log(`   Size: ${imageSizeMB} MB`);
-      
+
       const uploadResult: UploadResult = await uploadToShopifyGenerationsBucket(imageBuffer, filename, "image/png");
       const finalImageUrl = getPublicUrl(uploadResult.path, "shopify-generations");
-      
+
       console.log(`✅ Upload successful`);
       console.log(`   Storage Path: ${uploadResult.path}`);
       console.log(`   Public URL: ${finalImageUrl.substring(0, 80)}...`);
@@ -650,53 +772,62 @@ async function processAllPoses(
       // ✅ UPDATE DATABASE WITH FINAL RESULT
       // This updates the metadata with the final image URL and marks as completed
       console.log('💾 Updating database with final results...');
-      await updateGenerationMetadata(generationResult.id, pipelineResults, finalImageUrl, uploadResult.path);
+
+      if (isStudioMode) {
+        await supabaseAdmin.from("studio_generations").update({
+          status: 'completed',
+          result_image_url: finalImageUrl,
+          supabase_path: uploadResult.path,
+          updated_at: new Date().toISOString(),
+          metadata: {
+            status: 'completed',
+            duration: Date.now() - poseStartTime,
+            step_results: pipelineResults
+          }
+        }).eq("id", generationResult.id);
+      } else {
+        await updateGenerationMetadata(generationResult.id, pipelineResults, finalImageUrl, uploadResult.path);
+      }
+
       console.log('✅ Database updated successfully');
-      
+
       // Print real-time results summary
       console.log('');
       console.log('📸 Results Summary:');
       console.log(`  Pose ${index + 1}: ${pose.pose_name || 'Generated Pose ' + pose.pose_id}`);
       console.log(`    Images: 1`);
       console.log(`    Image 1:`);
-      
+
+      const isFree = subscription_tier.toLowerCase() === 'free';
       const isProfessionalOrEnterprise = ['professional', 'enterprise'].includes(subscription_tier.toLowerCase());
-      
+
       // Try-On (Base) - Required for all tiers
       const tryOnStep = pipelineResults.find(r => r.stepType === 'tryon');
-      const baseStatus = tryOnStep?.status === 'completed' ? '✅' : 
-                        tryOnStep?.status === 'failed' ? '❌' : 'pending';
+      const baseStatus = tryOnStep?.status === 'completed' ? '✅' :
+        tryOnStep?.status === 'failed' ? '❌' : 'pending';
       console.log(`      - Base (Try-On): ${baseStatus}`);
-      
+
+      // Free Tier: Show Watermark
+      if (isFree) {
+        const watermarkStep = pipelineResults.find(r => r.stepType === 'watermark' as any) || pipelineResults.find(r => r.stepType === 'watermark');
+        const watermarkStatus = watermarkStep?.status === 'completed' ? '✅' :
+          watermarkStep?.status === 'failed' ? '❌' : 'pending';
+        console.log(`      - Watermark: ${watermarkStatus}`);
+      }
+
       if (isProfessionalOrEnterprise) {
-        // Professional/Enterprise: Show 2K Upscale, 4K Upscale, and Face Swap
-        const basicUpscaleStep = pipelineResults.find(r => r.stepType === 'basic-upscale');
-        const upscale2KStatus = basicUpscaleStep?.status === 'completed' ? '✅' : 
-                                basicUpscaleStep?.status === 'failed' ? '❌' : 'pending';
-        console.log(`      - 2K Upscale: ${upscale2KStatus}`);
-        
+        // Professional/Enterprise: Show Enhanced Upscale (4K)
         const enhancedUpscaleStep = pipelineResults.find(r => r.stepType === 'enhanced-upscale');
-        const upscale4KStatus = enhancedUpscaleStep?.status === 'completed' ? '✅' : 
-                                enhancedUpscaleStep?.status === 'failed' ? '❌' : 'pending';
+        const upscale4KStatus = enhancedUpscaleStep?.status === 'completed' ? '✅' :
+          enhancedUpscaleStep?.status === 'failed' ? '❌' : 'pending';
         console.log(`      - 4K Upscale: ${upscale4KStatus}`);
-        
-        const faceSwapStep = pipelineResults.find(r => r.stepType === 'replicate-face-swap');
-        const faceSwapStatus = faceSwapStep?.status === 'completed' ? '✅' : 
-                              faceSwapStep?.status === 'failed' ? '❌' : 'pending';
-        console.log(`      - Face Swap: ${faceSwapStatus}`);
-      } else {
-        // Free/Creator: Show 2K Upscale only
-        const basicUpscaleStep = pipelineResults.find(r => r.stepType === 'basic-upscale');
-        const upscale2KStatus = basicUpscaleStep?.status === 'completed' ? '✅' : 
-                                basicUpscaleStep?.status === 'failed' ? '❌' : 'pending';
-        console.log(`      - 2K Upscale: ${upscale2KStatus}`);
       }
       console.log('');
-      
+
       console.log('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
       console.log(`┃  ✅ POSE ${index + 1}/${poses.length} COMPLETED SUCCESSFULLY           ┃`);
       console.log('┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛');
-      
+
       return { success: true, index };
     } catch (error: any) {
       console.error('┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓');
@@ -706,17 +837,30 @@ async function processAllPoses(
       console.error('Error Details:', error);
 
       // Mark this generation as failed
-      await supabaseAdmin
-        .from("generation_results")
-        .update({
-          generation_metadata: {
+      if (isStudioMode) {
+        await supabaseAdmin.from("studio_generations").update({
+          status: 'failed',
+          error_message: error.message,
+          metadata: {
             status: 'failed',
-            error_message: error.message,
-            completed_at: new Date().toISOString(),
+            error: error.message,
+            completed_at: new Date().toISOString()
           },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", generationResult.id);
+          updated_at: new Date().toISOString()
+        }).eq("id", generationResult.id);
+      } else {
+        await supabaseAdmin
+          .from("generation_results")
+          .update({
+            generation_metadata: {
+              status: 'failed',
+              error_message: error.message,
+              completed_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", generationResult.id);
+      }
 
       return { success: false, index };
     }
@@ -750,7 +894,7 @@ async function processAllPoses(
   console.log(`   ❌ Failed: ${failedCount}/${poses.length}`);
   console.log(`   📸 Total Poses: ${poses.length}`);
   console.log('───────────────────────────────────────────────────────');
-  
+
   const finalStatus = failedCount === poses.length ? "failed" : "completed";
   console.log(`🎯 Final Execution Status: ${finalStatus}`);
 
@@ -762,7 +906,7 @@ async function processAllPoses(
     console.log(`   Failed Poses: ${failedCount}`);
     console.log(`   Credits to Refund: ${creditsToRefund}`);
     console.log(`   Breakdown: ${failedCount} × 1000 credits`);
-    
+
     await refundCreditsForExecution(execution_id, creditsToRefund);
     console.log(`✅ Refund processed: ${creditsToRefund} credits`);
   }
@@ -799,7 +943,7 @@ async function updateExecutionProgress(
   // Calculate actual progress: (completed + failed) / total poses
   const processedPoses = completed + failed;
   const progress = total > 0 ? Math.round((processedPoses / total) * 100) : 0;
-  
+
   await supabaseAdmin
     .from("pipeline_executions")
     .update({
@@ -873,7 +1017,7 @@ async function consumeCreditsForExecution(
     console.log('💳 consumeCreditsForExecution called');
     console.log(`   Execution ID: ${execution_id}`);
     console.log(`   Credits: ${credits}`);
-    
+
     // Get execution details
     const { data: execution, error: fetchError } = await supabaseAdmin
       .from("pipeline_executions")
@@ -972,22 +1116,61 @@ export async function getExecutionStatus(
       return null;
     }
 
-    // Fetch generation results
-    const { data: results, error: resultsError } = await supabaseAdmin
-      .from("generation_results")
-      .select("*")
-      .eq("project_id", execution.project_id)
-      .contains("generation_config", { pipeline_execution_id: execution_id });
+    // Determine mode
+    const config = execution.config as any;
+    const isStudioMode = !!config?.mode;
 
-    if (resultsError) {
-      console.error(`❌ Error fetching results:`, resultsError);
-      return null;
+    let results: any[] = [];
+
+    if (isStudioMode) {
+      // Fetch STUDIO results
+      const { data, error } = await supabaseAdmin
+        .from("studio_generations")
+        .select("*")
+        .eq("pipeline_execution_id", execution_id);
+
+      if (error) {
+        console.error(`❌ Error fetching studio results:`, error);
+        return null;
+      }
+      results = (data || []).map(r => ({
+        result_id: r.id,
+        pose_id: r.pose_identifier,
+        pose_name: r.pose_identifier,
+        status: r.status,
+        final_image_url: r.result_image_url,
+        // Assuming Metadata structure matches what we wrote: { step_results: ... }
+        step_results: (r.metadata as any)?.step_results || {},
+        error: r.error_message
+      }));
+    } else {
+      // Fetch VTO results
+      const { data, error } = await supabaseAdmin
+        .from("generation_results")
+        .select("*")
+        .eq("project_id", execution.project_id)
+        .contains("generation_config", { pipeline_execution_id: execution_id });
+
+      if (error) {
+        console.error(`❌ Error fetching results:`, error);
+        return null;
+      }
+
+      results = (data || []).map(r => ({
+        result_id: r.id,
+        pose_id: r.pose_id,
+        pose_name: r.pose_name,
+        status: r.generation_metadata?.status || 'processing',
+        final_image_url: r.result_image_url,
+        step_results: r.generation_metadata?.step_results || {},
+        error: r.generation_metadata?.error_message
+      }));
     }
 
-    // Count completed and failed from metadata
-    const completed = results?.filter(r => r.generation_metadata?.status === 'completed').length || 0;
-    const failed = results?.filter(r => r.generation_metadata?.status === 'failed').length || 0;
-    const total = results?.length || 0;
+    // Count completed and failed
+    const completed = results.filter(r => r.status === 'completed').length;
+    const failed = results.filter(r => r.status === 'failed').length;
+    const total = results.length;
 
     return {
       execution_id: execution.id,
@@ -996,15 +1179,7 @@ export async function getExecutionStatus(
       total_poses: total,
       completed_poses: completed,
       failed_poses: failed,
-      generation_results: (results || []).map((result) => ({
-        result_id: result.id,
-        pose_id: result.pose_id,
-        pose_name: result.pose_name,
-        status: result.generation_metadata?.status || 'processing',
-        final_image_url: result.result_image_url,
-        step_results: result.generation_metadata?.step_results || {},
-        error: result.generation_metadata?.error_message,
-      })),
+      generation_results: results, // Normalized structure
     };
   } catch (error: any) {
     console.error(`❌ Error getting execution status:`, error);

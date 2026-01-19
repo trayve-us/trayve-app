@@ -50,45 +50,38 @@ export function ImageModal({
   const isProfessionalOrEnterprise = userTier === 'professional' || userTier === 'enterprise';
   const hasBgRemoved = !!image.generation_record?.removed_bg_url;
   
-  // CRITICAL: Only show 4K when face swap is complete (final step)
-  // Don't show 4K upscale even if available - wait for face swap to complete
+  // Update 4K Logic for new pipeline (Try-On -> 4K Upscale)
   const has4K = isProfessionalOrEnterprise && 
-    image.face_swap_status === 'completed' && 
-    !!image.face_swap_image_url && 
-    image.face_swap_image_url.length > 0;
+    !!image.upscaled_image_url && 
+    image.upscaled_image_url.length > 0;
   
-  // Get the actual 4K image URL (face swap result)
+  // Get the actual 4K image URL
   const get4KImageUrl = (): string | null => {
     if (!has4K) return null;
-    return image.face_swap_image_url || null;
+    return image.upscaled_image_url || null;
   };
   
   const fourKImageUrl = get4KImageUrl();
   
-  // Check if 4K is currently processing (not completed yet)
-  // This includes both 4K upscale and face swap processing
+  // Check if 4K is currently processing
   const is4KProcessing = isProfessionalOrEnterprise && (
     image.upscale_status === 'processing' || 
-    image.face_swap_status === 'processing' ||
-    // If 2K is ready but face swap hasn't completed yet, consider it processing
-    (image.basic_upscale_status === 'completed' && image.face_swap_status !== 'completed')
+    image.upscale_status === 'pending'
   );
   
-  const has2K = !!image.basic_upscale_url && image.basic_upscale_url.length > 0;
+  // "Standard" quality is now the base image_url (Try-On)
+  // Legacy support for basic_upscale_url if present
+  const standardImageUrl = image.image_url || image.basic_upscale_url;
+  const hasStandard = !!standardImageUrl && standardImageUrl.length > 0;
   
   // DEBUG: Add visual indicator to see what's happening
   const debugInfo = {
     tier: userTier,
     isPro: isProfessionalOrEnterprise,
     upscale_status: image.upscale_status,
-    upscaled_url_type: typeof image.upscaled_image_url,
     upscaled_url_value: image.upscaled_image_url,
-    upscaled_url_length: image.upscaled_image_url?.length || 0,
-    face_swap_status: image.face_swap_status,
-    face_swap_url_type: typeof image.face_swap_image_url,
-    face_swap_url_length: image.face_swap_image_url?.length || 0,
     has4K,
-    has2K,
+    hasStandard,
     is4KProcessing,
   };
   
@@ -97,21 +90,21 @@ export function ImageModal({
 
   // Determine how many columns to show
   const getColumnCount = () => {
+    // 3 columns: Standard + 4K + BG Removed (or processing 4k)
+    // 2 columns: Standard + 4K (or processing)
+    // 2 columns: Standard + BG Removed
+    // 1 column: Standard
+    
+    let cols = 0;
+    if (hasStandard) cols++;
+    
     if (isProfessionalOrEnterprise) {
-      // CRITICAL FIX: Show 2K and 4K columns while 4K is processing
-      // Show 3 columns: 2K + 4K + BG Removed
-      if (has2K && has4K && hasBgRemoved) return 3;
-      // Show 2 columns: 2K + 4K (both completed)
-      if (has2K && has4K) return 2;
-      // Show 2 columns: 2K + 4K Processing indicator (while 4K is processing)
-      if (has2K && is4KProcessing) return 2;
-      // Show 2 columns: 2K + BG Removed
-      if (has2K && hasBgRemoved) return 2;
-      return 1;
-    } else {
-      if (has2K && hasBgRemoved) return 2;
-      return 1;
+        if (has4K || is4KProcessing) cols++;
     }
+    
+    if (hasBgRemoved) cols++;
+    
+    return Math.max(1, cols);
   };
 
   const columnCount = getColumnCount();
@@ -190,19 +183,19 @@ export function ImageModal({
           /* Single Column Layout */
           <div className="relative">
             <img 
-              src={has4K && fourKImageUrl ? fourKImageUrl : (has2K ? image.basic_upscale_url! : image.image_url)}
+              src={has4K && fourKImageUrl ? fourKImageUrl : (standardImageUrl!)}
               alt="Full size preview"
               className="max-w-full max-h-[85vh] object-contain rounded-lg"
             />
             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
               <button 
                 onClick={() => handleDownload(
-                  has4K && fourKImageUrl ? fourKImageUrl : (has2K ? image.basic_upscale_url! : image.image_url),
-                  `${projectName}_${imageIndex + 1}_${has4K ? '4K' : '2K'}.png`
+                  (has4K && fourKImageUrl ? fourKImageUrl : standardImageUrl!)!,
+                  `${projectName}_${imageIndex + 1}_${has4K ? '4K' : 'Standard'}.png`
                 )}
                 className="px-4 py-2 bg-background border border-border rounded-md hover:bg-muted transition-colors"
               >
-                Download {has4K ? '4K' : '2K'}
+                Download {has4K ? '4K' : 'Standard'}
               </button>
             </div>
           </div>
@@ -210,26 +203,26 @@ export function ImageModal({
           /* Multi-Column Layout */
           <div className={`flex gap-6 w-full h-full ${columnCount === 3 ? 'max-w-[90rem]' : columnCount === 2 ? 'max-w-[60rem]' : 'max-w-[30rem]'}`}>
             
-            {/* Column 1: 2K Original */}
-            {has2K && (
+            {/* Column 1: Standard Quality (Base) */}
+            {hasStandard && (
               <div className="flex-1 relative flex flex-col items-center justify-center min-w-0">
                 <img 
-                  src={image.basic_upscale_url!}
-                  alt="2K Original"
+                  src={standardImageUrl!}
+                  alt="Standard Quality"
                   className="max-w-full max-h-[calc(85vh-80px)] w-auto object-contain rounded-lg shadow-xl"
                 />
                 <div className="absolute top-4 left-4 bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
-                  2K Original
+                  Standard Quality
                 </div>
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
                   <button 
-                    onClick={() => handleDownload(image.basic_upscale_url!, `${projectName}_${imageIndex + 1}_2K.png`)}
+                    onClick={() => handleDownload(standardImageUrl!, `${projectName}_${imageIndex + 1}_Standard.png`)}
                     className="px-6 py-2.5 bg-white/95 backdrop-blur-sm text-gray-900 rounded-lg hover:bg-white transition-colors shadow-lg font-medium flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                     </svg>
-                    Download 2K
+                    Download Standard
                   </button>
                 </div>
               </div>

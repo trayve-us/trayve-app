@@ -81,19 +81,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       poses,
       project_name,
       project_description,
+      mode,
+      prompts
     } = body;
 
-    // Validate required fields
+    console.log("➡️ Request Body Mode:", mode);
+    console.log("➡️ Request Body Prompts:", JSON.stringify(prompts));
+    console.log("➡️ Request Body Poses Count:", poses?.length);
+    console.log("➡️ Request Body Clothing URL:", clothing_image_url);
+
+    // Validate required fields 
     if (!base_model_id) {
+      console.error("❌ Validation Failed: Missing base_model_id");
       return json(
         { success: false, error: "base_model_id is required" },
         { status: 400 }
       );
     }
 
-    if (!clothing_image_url) {
+    // Validate required fields based on mode
+    // Virtual Try-On requires clothing image
+    if (!mode && !clothing_image_url) {
+      console.error("❌ Validation Failed: Missing clothing_image_url for VTO mode");
       return json(
-        { success: false, error: "clothing_image_url is required" },
+        { success: false, error: "clothing_image_url is required for Virtual Try-On" },
         { status: 400 }
       );
     }
@@ -122,6 +133,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       if (!pose.image_url) {
+        console.error(`❌ Validation Failed: Pose ${pose.pose_id} missing image_url`);
         return json(
           { success: false, error: "Each pose must have an image_url" },
           { status: 400 }
@@ -182,27 +194,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // Validate poses belong to the base model
-    const poseIds = poses.map((p) => p.pose_id);
-    const { data: validPoses, error: posesError } = await supabaseAdmin
-      .from("model_poses")
-      .select("id")
-      .eq("base_model_id", base_model_id)
-      .in("id", poseIds);
+    // Validate poses belong to the base model (ONLY for Virtual Try-On)
+    if (!mode) {
+      const poseIds = poses.map((p) => p.pose_id);
+      const { data: validPoses, error: posesError } = await supabaseAdmin
+        .from("model_poses")
+        .select("id")
+        .eq("base_model_id", base_model_id)
+        .in("id", poseIds);
 
-    if (posesError) {
-      console.error("❌ Error validating poses:", posesError);
-      return json(
-        { success: false, error: "Error validating poses" },
-        { status: 500 }
-      );
-    }
+      if (posesError) {
+        console.error("❌ Error validating poses:", posesError);
+        return json(
+          { success: false, error: "Error validating poses" },
+          { status: 500 }
+        );
+      }
 
-    if (!validPoses || validPoses.length !== poses.length) {
-      return json(
-        { success: false, error: "One or more poses do not belong to the selected model" },
-        { status: 400 }
-      );
+      if (!validPoses || validPoses.length !== poses.length) {
+        return json(
+          { success: false, error: "One or more poses do not belong to the selected model" },
+          { status: 400 }
+        );
+      }
     }
 
     // Start pipeline execution
@@ -214,6 +228,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       poses: poses as PoseInput[],
       project_name,
       project_description,
+      mode,
+      prompts
     });
 
     console.log(`✅ Pipeline execution started: ${result.execution_id}`);

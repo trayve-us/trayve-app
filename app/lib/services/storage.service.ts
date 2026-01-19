@@ -223,6 +223,14 @@ export async function deleteFromUserImagesBucket(filePath: string): Promise<void
  */
 export async function downloadImageAsBuffer(imageUrl: string): Promise<Buffer> {
   try {
+    // Check if it's a data URI
+    if (imageUrl.startsWith('data:')) {
+      const parts = imageUrl.split(',');
+      if (parts.length > 1) {
+        return Buffer.from(parts[1], 'base64');
+      }
+    }
+
     const response = await fetch(imageUrl);
     if (!response.ok) {
       throw new Error(`Failed to download image: ${response.statusText}`);
@@ -232,7 +240,7 @@ export async function downloadImageAsBuffer(imageUrl: string): Promise<Buffer> {
     return Buffer.from(arrayBuffer);
   } catch (error) {
     console.error("Download error:", error);
-    throw new Error(`Failed to download image from URL: ${imageUrl}`);
+    throw new Error(`Failed to download image from URL: ${imageUrl.substring(0, 50)}...`);
   }
 }
 

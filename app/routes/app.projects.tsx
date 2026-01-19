@@ -46,6 +46,7 @@ interface Project {
   updated_at: string;
   result_count: number;
   generation_results: GenerationResult[];
+  mode?: 'virtual_tryon' | 'shop_ready' | 'post_ready';
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -79,18 +80,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // For each project, fetch generation_results separately
       const projectsWithResults = await Promise.all(
         (projectsData || []).map(async (project: any) => {
-          const { data: results, error: resultsError } = await supabaseAdmin
-            .from('generation_results')
-            .select('id, pose_id, pose_name, result_image_url, generation_metadata, created_at, removed_bg_url')
+          // 1. Determine Mode from Pipeline Execution
+          const { data: executions } = await supabaseAdmin
+            .from('pipeline_executions')
+            .select('config')
             .eq('project_id', project.id)
-            .order('created_at', { ascending: false });
+            .order('started_at', { ascending: false })
+            .limit(1);
 
-          if (resultsError) {
-            console.error(`❌ Error fetching results for project ${project.id}:`, resultsError);
+          const config = executions?.[0]?.config as any;
+          const rawMode = config?.mode;
+
+          let mode = 'virtual_tryon';
+          if (rawMode === 'product_shots') mode = 'shop_ready';
+          else if (rawMode === 'social_media') mode = 'post_ready';
+
+          // 2. Fetch Results based on Mode
+          let results: any[] = [];
+
+          if (mode === 'virtual_tryon') {
+            const { data: vtoResults, error: vtoError } = await supabaseAdmin
+              .from('generation_results')
+              .select('id, pose_id, pose_name, result_image_url, generation_metadata, created_at, removed_bg_url')
+              .eq('project_id', project.id)
+              .order('created_at', { ascending: false });
+
+            if (vtoError) console.error(`❌ VTO Fetch Error ${project.id}:`, vtoError);
+            results = vtoResults || [];
+          } else {
+            // Fetch Studio Generations
+            const { data: studioResults, error: studioError } = await supabaseAdmin
+              .from('studio_generations')
+              .select('*')
+              .eq('project_id', project.id)
+              .order('created_at', { ascending: false });
+
+            if (studioError) console.error(`❌ Studio Fetch Error ${project.id}:`, studioError);
+
+            // Normalize Studio Results
+            results = (studioResults || []).map(r => ({
+              id: r.id,
+              pose_id: 0,
+              pose_name: r.pose_identifier,
+              result_image_url: r.result_image_url,
+              created_at: r.created_at || r.updated_at,
+              generation_metadata: r.metadata,
+              removed_bg_url: null
+            }));
           }
 
           return {
             ...project,
+            mode,
             generation_results: results || []
           };
         })
@@ -102,12 +143,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         console.error('❌ Error fetching projects:', error);
       } else {
         console.log(`✅ Found ${data?.length || 0} projects`);
-        
+
         // Transform data to match expected format
         projects = (data || []).map((project: any) => {
           const results = (project.generation_results || []).map((result: any) => {
             const metadata = result.generation_metadata || {};
-            
+
             return {
               id: result.id,
               pose_id: result.pose_id,
@@ -146,6 +187,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             updated_at: project.updated_at,
             result_count: results.length,
             generation_results: results,
+            mode: project.mode
           };
         });
 
@@ -171,16 +213,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shop,
     user: user
       ? {
-          email: user.shop_email || shop,
-          shopName: user.shop_name || shop.replace(".myshopify.com", ""),
-          trayveUserId: user.trayve_user_id,
-        }
+        email: user.shop_email || shop,
+        shopName: user.shop_name || shop.replace(".myshopify.com", ""),
+        trayveUserId: user.trayve_user_id,
+      }
       : null,
     credits: balance
       ? {
-          available: balance.available_credits,
-          total: balance.total_credits,
-        }
+        available: balance.available_credits,
+        total: balance.total_credits,
+      }
       : { available: 0, total: 0 },
     projects,
     testingMode: process.env.TESTING_MODE === "true",
@@ -199,6 +241,7 @@ export default function Projects() {
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState({ title: "", description: "" });
   const [isDeleting, setIsDeleting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'virtual_tryon' | 'shop_ready' | 'post_ready'>('virtual_tryon');
 
   // Debounce search term
   useEffect(() => {
@@ -210,20 +253,26 @@ export default function Projects() {
 
   // Filter projects
   const filteredProjects = useMemo(() => {
-    if (!debouncedSearchTerm.trim()) return projects;
+    // 1. Filter by Tab
+    let filtered = projects.filter(p => (p.mode || 'virtual_tryon') === activeTab);
 
-    return projects.filter((project) => {
-      const projectTitle = project.title || "Untitled Project";
-      const matchesSearch =
-        projectTitle.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        (project.clothing_item_name &&
-          project.clothing_item_name
-            .toLowerCase()
-            .includes(debouncedSearchTerm.toLowerCase()));
+    // 2. Filter by Search
+    if (debouncedSearchTerm.trim()) {
+      filtered = filtered.filter((project) => {
+        const projectTitle = project.title || "Untitled Project";
+        const matchesSearch =
+          projectTitle.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+          (project.clothing_item_name &&
+            project.clothing_item_name
+              .toLowerCase()
+              .includes(debouncedSearchTerm.toLowerCase()));
 
-      return matchesSearch;
-    });
-  }, [projects, debouncedSearchTerm]);
+        return matchesSearch;
+      });
+    }
+
+    return filtered;
+  }, [projects, debouncedSearchTerm, activeTab]);
 
   // Get project cover image
   const getProjectCoverImage = useCallback((project: Project) => {
@@ -233,7 +282,7 @@ export default function Projects() {
       project.generation_results.length > 0
     ) {
       const latestResult = project.generation_results[0];
-      
+
       // Priority for cover image:
       // 1. Face swap (highest quality if available)
       // 2. 4K upscale (Professional/Enterprise)
@@ -329,15 +378,15 @@ export default function Projects() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
-            <img 
-              src="/logo_trayve.png" 
-              alt="Trayve" 
+            <img
+              src="/logo_trayve.png"
+              alt="Trayve"
               style={{
                 height: "32px",
                 width: "auto",
               }}
             />
-            
+
             {/* Navigation Tabs */}
             <nav style={{ display: "flex", gap: "8px" }}>
               <button
@@ -360,7 +409,51 @@ export default function Projects() {
                   e.currentTarget.style.backgroundColor = "transparent";
                 }}
               >
-                Generate
+                Virtual Try-on
+              </button>
+              <button
+                onClick={() => navigate("/app/shop-ready")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#6b7280",
+                  backgroundColor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f9fafb";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Shop Ready
+              </button>
+              <button
+                onClick={() => navigate("/app/post-ready")}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  color: "#6b7280",
+                  backgroundColor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f9fafb";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Post Ready
               </button>
               <button
                 onClick={() => navigate("/app/projects")}
@@ -418,6 +511,34 @@ export default function Projects() {
         }}
       >
         <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
+          {/* Mode Tabs */}
+          <div style={{ marginBottom: "24px", display: "flex", gap: "12px" }}>
+            {[
+              { id: 'virtual_tryon', label: 'Virtual Try-On' },
+              { id: 'shop_ready', label: 'Shop Ready' },
+              { id: 'post_ready', label: 'Post Ready' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "100px",
+                  fontSize: "14px",
+                  border: "1px solid",
+                  borderColor: activeTab === tab.id ? "#702dff" : "#E1E3E5",
+                  backgroundColor: activeTab === tab.id ? "#702dff" : "white",
+                  color: activeTab === tab.id ? "white" : "#6b7280",
+                  fontWeight: "500",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease"
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
           {/* Search Bar */}
           <div style={{ marginBottom: "32px" }}>
             <div
@@ -611,8 +732,8 @@ export default function Projects() {
                               {project.status === "processing"
                                 ? "Processing..."
                                 : project.status === "active"
-                                ? "Generating..."
-                                : "No preview"}
+                                  ? "Generating..."
+                                  : "No preview"}
                             </p>
                           </div>
                         </div>

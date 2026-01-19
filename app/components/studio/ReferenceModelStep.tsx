@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { Lock, Filter, X } from "lucide-react";
-import {
-  enrichModelsWithAccess,
-  FREE_TIER_MODELS,
-  type SubscriptionTier,
-  type EnrichedModel
+import { 
+  enrichModelsWithAccess, 
+  type SubscriptionTier, 
+  type EnrichedModel 
 } from "../../lib/services/model-access.service";
 
-interface BaseModel {
+export interface BaseModel {
   id: string;
   name: string;
   description?: string;
@@ -23,9 +22,9 @@ interface BaseModel {
   updated_at: string;
 }
 
-interface ModelSelectStepProps {
+interface ReferenceModelStepProps {
   selectedModel: string | null;
-  onModelSelect: (modelId: string) => void;
+  onModelSelect: (model: BaseModel) => void;
   subscriptionTier: SubscriptionTier;
   showGenerationStats?: boolean;
 }
@@ -36,14 +35,14 @@ interface FilterState {
   ethnicity: string[];
 }
 
-const ModelFilterModal = ({
-  isOpen,
-  onClose,
-  currentFilters,
+const ModelFilterModal = ({ 
+  isOpen, 
+  onClose, 
+  currentFilters, 
   onApply,
-  models
-}: {
-  isOpen: boolean;
+  models 
+}: { 
+  isOpen: boolean; 
   onClose: () => void;
   currentFilters: FilterState;
   onApply: (filters: FilterState) => void;
@@ -61,7 +60,7 @@ const ModelFilterModal = ({
     return models.filter(model => {
       // Age Range Check
       if (localFilters.ageRange.length > 0) {
-        if (!model.age_range || !localFilters.ageRange.includes(model.age_range)) return false;
+        if (!model.age_range || !localFilters.ageRange.includes(model.age_range)) return false; 
       }
       // Body Type Check
       if (localFilters.bodyType.length > 0) {
@@ -85,14 +84,14 @@ const ModelFilterModal = ({
       const exists = current.includes(value);
       return {
         ...prev,
-        [category]: exists
+        [category]: exists 
           ? current.filter(item => item !== value)
           : [...current, value]
       };
     });
   };
 
-  const isSelected = (category: keyof FilterState, value: string) =>
+  const isSelected = (category: keyof FilterState, value: string) => 
     localFilters[category].includes(value);
 
   const FilterSection = ({ title, options, category }: { title: string, options: string[], category: keyof FilterState }) => (
@@ -130,26 +129,26 @@ const ModelFilterModal = ({
             <X size={20} className="text-gray-500" />
           </button>
         </div>
-
+        
         <div className="p-6 max-h-[60vh] overflow-y-auto">
           <p className="text-sm text-gray-500 mb-6">Select your preferences to find the perfect model</p>
-
-          <FilterSection
-            title="Age Range"
+          
+          <FilterSection 
+            title="Age Range" 
             category="ageRange"
-            options={["18-25", "26-32", "28", "30-40"]}
+            options={["18-25", "26-32", "28", "30-40"]} 
           />
-
-          <FilterSection
-            title="Body Type"
+          
+          <FilterSection 
+            title="Body Type" 
             category="bodyType"
-            options={["Slim", "Athletic", "Curvy", "Plus Size"]}
+            options={["Slim", "Athletic", "Curvy", "Plus Size"]} 
           />
-
-          <FilterSection
-            title="Ethnicity"
+          
+          <FilterSection 
+            title="Ethnicity" 
             category="ethnicity"
-            options={["Asian", "African / Black", "South Asian", "Hispanic / Latina", "Caucasian"]}
+            options={["Asian", "African / Black", "South Asian", "Hispanic / Latina", "Caucasian"]} 
           />
         </div>
 
@@ -166,16 +165,29 @@ const ModelFilterModal = ({
   );
 };
 
-export function ModelSelectStep({
+export function ReferenceModelStep({
   selectedModel,
   onModelSelect,
   subscriptionTier,
   showGenerationStats = false,
-}: ModelSelectStepProps) {
+}: ReferenceModelStepProps) {
   const [models, setModels] = useState<EnrichedModel<BaseModel>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modelStats, setModelStats] = useState<Record<string, number>>({});
+  const [userResultCounts, setUserResultCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetch('/api/user/model-counts')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          console.log("📊 User Model Counts:", data.counts);
+          setUserResultCounts(data.counts);
+        }
+      })
+      .catch(e => console.error("Failed to fetch user counts:", e));
+  }, []);
 
   // Filter States
   const [selectedGender, setSelectedGender] = useState<string>("female"); // Default to female
@@ -191,10 +203,10 @@ export function ModelSelectStep({
     try {
       setLoading(true);
       setError(null);
-
+      
       const apiFilters: any = {
         is_active: true,
-        promoted_only: false,
+        promoted_only: false, 
       };
 
       // We only send gender to API, rest is filtered client-side for now
@@ -221,7 +233,7 @@ export function ModelSelectStep({
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-
+      
       if (data.success && data.models) {
         let enriched = enrichModelsWithAccess<BaseModel>(data.models, subscriptionTier);
         setModels(enriched);
@@ -251,11 +263,11 @@ export function ModelSelectStep({
         // Simple string match or inclusion for now since data structure is simple
         // If model.age_range is "25" and filter is "18-25", ideally we parse.
         // For MVP, we'll check if model.age_range matches any selected filter string directly
-        if (!model.age_range || !filters.ageRange.includes(model.age_range)) {
-          // Relaxed check: if no age range on model, do we show it? Let's say yes for now, or strict no?
-          // Strict implementation:
-          // return false; 
-          // Loose implementations for when data is sparse:
+        if (!model.age_range || !filters.ageRange.includes(model.age_range)) { 
+           // Relaxed check: if no age range on model, do we show it? Let's say yes for now, or strict no?
+           // Strict implementation:
+           // return false; 
+           // Loose implementations for when data is sparse:
         }
       }
 
@@ -273,27 +285,26 @@ export function ModelSelectStep({
         if (!model.ethnicity || !filters.ethnicity.includes(model.ethnicity)) return false;
       }
 
-      // REMOVED Free Tier restriction to allow showing locked models
-
       return true;
     }).sort((a, b) => {
-      // Sort by Access (Unlocked first)
-      const aLocked = a.accessInfo.isLocked;
-      const bLocked = b.accessInfo.isLocked;
-      if (aLocked !== bLocked) {
-        return aLocked ? 1 : -1;
+      // Prioritize user's own results count (Virtual Try-On Results)
+      const countA = userResultCounts[a.id] || 0;
+      const countB = userResultCounts[b.id] || 0;
+      
+      if (countA !== countB) {
+        return countB - countA; // Descending order: Most results first
       }
 
-      // Then sort by usage stats if enabled
+      // Secondary sort by global stats if enabled
       if (showGenerationStats) {
-        const countA = modelStats[a.id] || 0;
-        const countB = modelStats[b.id] || 0;
-        return countB - countA;
+        const globalA = modelStats[a.id] || 0;
+        const globalB = modelStats[b.id] || 0;
+        return globalB - globalA;
       }
-
+      
       return 0;
     });
-  }, [models, filters, selectedGender, showGenerationStats, modelStats]);
+  }, [models, filters, selectedGender, showGenerationStats, modelStats, userResultCounts]);
 
   const handleApplyFilters = (newFilters: FilterState) => {
     setFilters(newFilters);
@@ -302,8 +313,8 @@ export function ModelSelectStep({
 
   return (
     <div className="space-y-6 pb-20 sm:pb-24 md:pb-28">
-
-      <ModelFilterModal
+      
+      <ModelFilterModal 
         isOpen={isFilterOpen}
         onClose={() => setIsFilterOpen(false)}
         currentFilters={filters}
@@ -375,24 +386,34 @@ export function ModelSelectStep({
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-5">
             {filteredModels.map((model) => {
               const isSelected = selectedModel === model.id;
-              const isLocked = model.accessInfo.isLocked;
+              // ALWAYS UNLOCKED for Reference Model Step
+              const isLocked = false; 
+              const resultCount = userResultCounts[model.id] || 0;
 
               return (
                 <div
                   key={model.id}
-                  onClick={() => !isLocked && onModelSelect(model.id)}
-                  className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer group transition-all duration-300 ${isSelected ? "ring-2 ring-offset-2 ring-[#702dff]" : ""
-                    }`}
+                  onClick={() => onModelSelect(model)}
+                  className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer group transition-all duration-300 ${
+                    isSelected ? "ring-2 ring-offset-2 ring-[#702dff]" : ""
+                  }`}
                 >
+                  {/* Results Badge */}
+                  <div className="absolute top-2 left-2 z-20 px-2.5 py-1.5 bg-black/70 backdrop-blur-md rounded-lg border border-white/10 flex items-center gap-2 shadow-lg group-hover:bg-black/80 transition-colors">
+                    <div className={`w-2 h-2 rounded-full ${resultCount > 0 ? "bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.5)]" : "bg-gray-400"}`}></div>
+                    <span className="text-xs font-bold text-white tracking-wide">{resultCount} <span className="text-gray-300 font-medium text-[10px]">Results</span></span>
+                  </div>
+
                   <div className="absolute inset-0 bg-gray-200">
                     <div className="relative w-full h-full">
                       <img
                         src={model.image_url}
                         alt={model.name}
-                        className={`w-full h-full object-cover transition-transform duration-700 ${isSelected ? "scale-105" : "group-hover:scale-110"
-                          } ${isLocked ? "blur-[1px]" : ""}`}
+                        className={`w-full h-full object-cover transition-transform duration-700 ${
+                          isSelected ? "scale-105" : "group-hover:scale-110"
+                        }`}
                         style={{
-                          objectPosition: "50% 0%"
+                          objectPosition: "50% 0%" 
                         }}
                       />
                     </div>
@@ -414,13 +435,6 @@ export function ModelSelectStep({
                       {typeof model.height_cm === 'number' ? `${model.height_cm}cm` : ''} • {model.body_type}
                     </p>
                   </div>
-
-                  {/* Locked Icon Badge (Top Left) */}
-                  {isLocked && (
-                    <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md border border-white/10">
-                      <Lock className="w-3.5 h-3.5 text-white" />
-                    </div>
-                  )}
                 </div>
               );
             })}
